@@ -12,6 +12,7 @@ import com.example.notes.data.remote.ApiClient
 import com.example.notes.data.remote.NotesSyncRepository
 import com.example.notes.data.repository.NoteRepository
 import com.example.notes.util.Logger
+import android.net.Uri
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -27,6 +28,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 /* -----------------------------------------------------------------------
  * Image-URI plumbing
@@ -366,12 +368,49 @@ class NoteEditViewModel(
             return
         }
 
+        // V5.2.1 — copy the picked content:// URI into the app's private
+        // files directory before doing anything else. content:// grants
+        // expire when the picking activity goes away, so the renderer
+        // would show a "broken image" placeholder once the user reopens
+        // the note from the list. A file:// URI under [Context.filesDir]
+        // survives process death and even app uninstall via auto-backup.
+        val pickedUri = uri.toUri()
+        val localFile: java.io.File? = try {
+            appContext.contentResolver.openInputStream(pickedUri)?.use { input ->
+                val bytes = input.readBytes()
+                if (bytes.isEmpty()) return@use null
+                val ext = when {
+                    bytes.size >= 4 && bytes[0] == 0x89.toByte() &&
+                        bytes[1] == 0x50.toByte() && bytes[2] == 0x4E.toByte() -> "png"
+                    bytes.size >= 2 && bytes[0] == 0xFF.toByte() &&
+                        bytes[1] == 0xD8.toByte() -> "jpg"
+                    else -> "img"
+                }
+                val out = java.io.File(
+                    appContext.filesDir,
+                    "img_${System.currentTimeMillis()}.$ext"
+                )
+                out.writeBytes(bytes)
+                out
+            }
+        } catch (t: Throwable) {
+            Logger.w("NoteEditVM", "addImageUri: copy to local failed for $uri", t)
+            null
+        }
+        if (localFile == null) {
+            emitMessage("Couldn't read the selected image — please try a different one.")
+            return
+        }
+        val localUri = Uri.fromFile(localFile).toString()
+
+        Logger.d("NoteEditVM", "addImageUri: copied to $localUri (${localFile.length()} bytes)")
+
         val list = current.blocks.toMutableList()
         val last = list.lastOrNull()
         if (last is ContentBlock.TextBlock && last.text.isEmpty()) {
             list.removeAt(list.lastIndex)
         }
-        list.add(ContentBlock.ImageBlock(uri = uri))
+        list.add(ContentBlock.ImageBlock(uri = localUri))
         list.add(ContentBlock.TextBlock())
         _state.value = current.copy(blocks = list)
         saveNow()
@@ -380,7 +419,7 @@ class NoteEditViewModel(
         // onSuccess rewrite matches the exact string the user picked
         // (Uri.toString() vs the human-facing Uri representation can
         // differ on some OEMs).
-        val localUriString = uri
+        val localUriString = localUri
         applicationScope.launch {
             try {
                 Logger.d(
@@ -413,7 +452,7 @@ class NoteEditViewModel(
                             e
                         )
                         emitMessage(
-                            "Image upload failed — saved locally only. " +
+                            "Image upload failed — kept on this device only. " +
                                 "It won't appear on other devices until you reconnect."
                         )
                     }
@@ -424,7 +463,7 @@ class NoteEditViewModel(
                     "addImageUri: upload crashed for $localUriString",
                     t
                 )
-                emitMessage("Image upload crashed — saved locally only.")
+                emitMessage("Image upload crashed — kept on this device only.")
             }
         }
     }
