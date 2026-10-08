@@ -1,0 +1,15 @@
+name = "notes-backend"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "notes-db"
+database_id = "edb51ccd-3c6a-49d8-9252-89b6ecb655b3"
+
+[[r2_buckets]]
+binding = "IMAGES"
+bucket_name = "notes-images"
+
+[vars]
+ENV = "production"

@@ -1,0 +1,48 @@
+# --- Gradle / Android Studio ---
+.gradle/
+build/
+local.properties
+*.iml
+.idea/
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+
+# --- Logs / temp ---
+*.log
+*.hprof
+*.tmp
+
+# --- OS junk ---
+.DS_Store
+Thumbs.db
+
+# --- Keystore (signing material) ---
+*.jks
+*.keystore
+keystore.properties
+
+# --- Local environment / secrets ---
+.env
+.env.*
+!.env.example
+
+# --- Cloudflare .dev.vars (local secrets) ---
+.dev.vars
+
+# --- Node / Wrangler cache ---
+node_modules/
+.wrangler/
+dist/
+
+# --- Android debug output ---
+captures/
+*.log
+
+# --- Miniflare local SQLite ---
+.wrangler/state/
