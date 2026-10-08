@@ -384,7 +384,9 @@ fun NoteEditScreen(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         if (uri != null) {
-            persistReadPermission(context, uri)
+            // V5.2.1 — pass the transient content:// URI straight to the
+            // ViewModel; it copies the bytes into filesDir so the image
+            // survives the URI grant expiring.
             viewModel.addImageUri(uri.toString())
         }
     }
