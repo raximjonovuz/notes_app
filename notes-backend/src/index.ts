@@ -21,7 +21,7 @@ export default {
 
         // Health / root
         if (path === '/' && method === 'GET') {
-            return new Response('Notes Backend API — v3.0', {
+            return new Response('Notes Backend API — v5.3', {
                 headers: { 'Content-Type': 'text/plain', ...corsHeaders() },
             });
         }
@@ -37,12 +37,11 @@ export default {
             return googleAuthRoute(request, env);
         }
 
-        // Public file serving
-        if (path.startsWith('/files/') && method === 'GET') {
-            return serveFile(path, env);
-        }
-
-        // Authenticated routes
+        // Authenticated routes — bearer token required.
+        // V5.3 (BUG 6 fix): /files/<key> was previously a public route and
+        // leaked R2 URLs across users. Now everything below this line is
+        // gated by getUserId(); serveFile() checks ownership against the
+        // images table.
         const userId = await getUserId(request, env);
         if (!userId) {
             return errorResponse('Unauthorized', 401);
@@ -65,6 +64,9 @@ export default {
         }
         if (path === '/upload' && method === 'POST') {
             return handleUpload(request, env, userId);
+        }
+        if (path.startsWith('/files/') && method === 'GET') {
+            return serveFile(path, userId, env);
         }
 
         return errorResponse('Not Found', 404);

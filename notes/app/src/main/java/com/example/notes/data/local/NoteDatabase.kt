@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [NoteEntity::class], version = 9, exportSchema = false)
+@Database(entities = [NoteEntity::class], version = 10, exportSchema = false)
 abstract class NoteDatabase : RoomDatabase() {
 
     abstract fun noteDao(): NoteDao
@@ -16,81 +16,78 @@ abstract class NoteDatabase : RoomDatabase() {
         @Volatile
         private var INSTANCE: NoteDatabase? = null
 
-        /**
-         * V5.0.2 — bridges the gap between every pre-V3.2 schema and the V7
-         * schema. Without this Room would throw `IllegalStateException:
-         * A migration from N to 9 was required but not found` and silently
-         * wipe the user's local notes on first launch after the update.
-         *
-         * Each step assumes the previous version had the prior columns
-         * (matching the commit history of [NoteEntity]). The migrations
-         * only ADD new columns with safe defaults so the existing data is
-         * preserved verbatim.
-         */
+        // V2 — first migration chain, kept verbatim.
         private val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                // V2 added background color + font weight.
                 db.execSQL("ALTER TABLE notes ADD COLUMN backgroundColor INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("ALTER TABLE notes ADD COLUMN fontWeight INTEGER NOT NULL DEFAULT 0")
             }
         }
-
         private val MIGRATION_2_3 = object : Migration(2, 3) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                // Reserved for V3 (no schema change in V3 itself).
-            }
+            override fun migrate(db: SupportSQLiteDatabase) {}
         }
-
         private val MIGRATION_3_4 = object : Migration(3, 4) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                // V4 added per-block text size index.
                 db.execSQL("ALTER TABLE notes ADD COLUMN textSize INTEGER NOT NULL DEFAULT 1")
             }
         }
-
         private val MIGRATION_4_5 = object : Migration(4, 5) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                // V5 added the imageUris column for inline images.
                 db.execSQL("ALTER TABLE notes ADD COLUMN imageUris TEXT NOT NULL DEFAULT ''")
             }
         }
-
         private val MIGRATION_5_6 = object : Migration(5, 6) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                // Reserved for V3.0 → V3.1 shape change (no-op, default textSize).
-            }
+            override fun migrate(db: SupportSQLiteDatabase) {}
         }
-
         private val MIGRATION_6_7 = object : Migration(6, 7) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                // V3.1 added the serverId UUID (nullable).
                 db.execSQL("ALTER TABLE notes ADD COLUMN serverId TEXT")
             }
         }
-
-        /**
-         * V3.2 — adds the `userId` column to `notes` so each signed-in account
-         * only sees its own notes. Existing rows default to 0 (anonymous / pre-
-         * login local), and the destructive fallback below catches the edge
-         * case where the migration is not run for some reason.
-         */
         private val MIGRATION_7_8 = object : Migration(7, 8) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL(
-                    "ALTER TABLE notes ADD COLUMN userId INTEGER NOT NULL DEFAULT 0"
-                )
+                db.execSQL("ALTER TABLE notes ADD COLUMN userId INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+        private val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE notes ADD COLUMN isPinned INTEGER NOT NULL DEFAULT 0")
             }
         }
 
         /**
-         * V4.5 — adds the `isPinned` column. Defaults to 0 (false) for all
-         * existing rows so the upgrade is invisible to the user.
+         * V5.3 (BUG 1, 2, 3, 4, 5 fixes) — adds the sync-state columns
+         * that the rewritten push/pull/merge logic depends on. Safe
+         * defaults so existing data carries over verbatim.
+         *
+         * - dirtyRevision=1:        every existing row counts as "needs to
+         *                          be uploaded once". Subsequent pushes
+         *                          won't re-upload rows we already
+         *                          confirmed via UPSERT.
+         * - lastSyncedRevision=0:  matches "never pushed". The first push
+         *                          will clear it because the server will
+         *                          always treat our payload as fresh.
+         * - serverChangeId=0:      unknown until the first pull.
+         * - deletedAt=NULL:        default alive.
+         * - isConflict=false,
+         *   baseTitle/baseContent=NULL: no prior 3-way merge baseline.
          */
-        private val MIGRATION_8_9 = object : Migration(8, 9) {
+        private val MIGRATION_9_10 = object : Migration(9, 10) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL(
-                    "ALTER TABLE notes ADD COLUMN isPinned INTEGER NOT NULL DEFAULT 0"
-                )
+                db.execSQL("ALTER TABLE notes ADD COLUMN deletedAt INTEGER")
+                db.execSQL("ALTER TABLE notes ADD COLUMN dirtyRevision INTEGER NOT NULL DEFAULT 1")
+                db.execSQL("ALTER TABLE notes ADD COLUMN lastSyncedRevision INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE notes ADD COLUMN serverChangeId INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE notes ADD COLUMN serverUpdatedAt INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE notes ADD COLUMN isConflict INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE notes ADD COLUMN conflictOriginalId TEXT")
+                db.execSQL("ALTER TABLE notes ADD COLUMN baseTitle TEXT")
+                db.execSQL("ALTER TABLE notes ADD COLUMN baseContent TEXT")
+
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_notes_serverId ON notes(serverId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_notes_userId ON notes(userId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_notes_deletedAt ON notes(deletedAt)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_notes_userId_dirtyRevision ON notes(userId, dirtyRevision)")
             }
         }
 
@@ -109,12 +106,9 @@ abstract class NoteDatabase : RoomDatabase() {
                         MIGRATION_5_6,
                         MIGRATION_6_7,
                         MIGRATION_7_8,
-                        MIGRATION_8_9
+                        MIGRATION_8_9,
+                        MIGRATION_9_10
                     )
-                    // V4.4: never silently wipe user notes on a schema bump.
-                    // Every new schema version must ship with an explicit
-                    // Migration (or MigrationTestHelper) so the build fails
-                    // loudly during development if a migration is missing.
                     .build()
                 INSTANCE = instance
                 instance

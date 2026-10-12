@@ -1492,10 +1492,11 @@ private fun InlineImage(
     onTap: () -> Unit,
     onRemove: () -> Unit
 ) {
-    val context = LocalContext.current
-    val bitmap: ImageBitmap? = remember(uriString) {
-        loadImageBitmapFromUri(context, uriString)
-    }
+    // V5.2.3 — moved off the UI thread. The previous synchronous
+    // `remember { loadImageBitmapFromUri(...) }` blocked the main thread
+    // on a slow `https://…` fetch and surfaced as "the image
+    // disappeared" the moment the public URL was wired in.
+    val bitmap: ImageBitmap? = com.example.notes.ui.util.rememberLoadedImage(uriString)
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -1591,10 +1592,10 @@ private fun FullScreenImageViewer(
     uriString: String,
     onClose: () -> Unit
 ) {
-    val context = LocalContext.current
-    val bitmap: ImageBitmap? = remember(uriString) {
-        loadImageBitmapFromUri(context, uriString)
-    }
+    // V5.2.3 — moved off the UI thread (see [rememberLoadedImage]). The
+    // full-screen viewer used to be the worst offender: tapping an image
+    // would freeze the screen until the network fetch returned.
+    val bitmap: ImageBitmap? = com.example.notes.ui.util.rememberLoadedImage(uriString)
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -1644,20 +1645,15 @@ private fun FullScreenImageViewer(
     }
 }
 
-private fun loadImageBitmapFromUri(
-    context: Context,
-    uriString: String
-): ImageBitmap? {
-    return try {
-        val uri = uriString.toUri()
-        context.contentResolver.openInputStream(uri)?.use { input ->
-            val bitmap = BitmapFactory.decodeStream(input)
-            bitmap?.asImageBitmap()
-        }
-    } catch (_: Exception) {
-        null
-    }
-}
+/* -----------------------------------------------------------------------
+ * V5.2.3 — image decoding used to live in `loadImageBitmapFromUri`
+ * below this line. That version ran OkHttp + BitmapFactory on the UI
+ * thread inside `remember { … }`, which on a slow network turned the
+ * public-URL rewrite that fires after a successful upload into "the
+ * image disappears". The decode itself is now in
+ * [com.example.notes.ui.util.rememberLoadedImage] and runs on
+ * Dispatchers.IO via a LaunchedEffect; this file just calls it.
+ * --------------------------------------------------------------------- */
 
 /* -----------------------------------------------------------------------
  * Color swatches

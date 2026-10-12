@@ -850,17 +850,11 @@ private fun extractFirstImageUriFromContent(raw: String): String? {
 /** Lightweight thumbnail (no special caching — list cards stay snappy). */
 @Composable
 private fun ThumbnailImage(uriString: String, modifier: Modifier = Modifier) {
-    val context = LocalContext.current
-    val bitmap = remember(uriString) {
-        try {
-            val uri = uriString.toUri()
-            context.contentResolver.openInputStream(uri)?.use { input ->
-                BitmapFactory.decodeStream(input)
-            }
-        } catch (_: Exception) {
-            null
-        }
-    }
+    // V5.2.3 — decode off the UI thread so an https:// thumbnail for a
+    // freshly-uploaded note can't freeze the list when the network is
+    // slow. The previous implementation did the read inside
+    // `remember { … }` on the main thread.
+    val bitmap = com.example.notes.ui.util.rememberLoadedImage(uriString)
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(6.dp))
@@ -869,7 +863,7 @@ private fun ThumbnailImage(uriString: String, modifier: Modifier = Modifier) {
     ) {
         if (bitmap != null) {
             Image(
-                bitmap = bitmap.asImageBitmap(),
+                bitmap = bitmap,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()

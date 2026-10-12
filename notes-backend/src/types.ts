@@ -4,14 +4,23 @@ export interface User {
     created_at: number;
 }
 
+/**
+ * V5.3 schema — adds `client_updated_at`, `change_id`, `deleted_at`.
+ * `updated_at` is still returned for backward compat but it now equals
+ * `client_updated_at` so the client can use them interchangeably.
+ */
 export interface Note {
-    id: string;                     // UUID
+    id: string;
     user_id: number;
     title: string;
     content: string;
     created_at: number;
+    /** @deprecated use client_updated_at */
     updated_at: number;
-    is_favorite: number;            // 0 or 1
+    client_updated_at: number;
+    change_id: number;
+    deleted_at: number | null;
+    is_favorite: number;
     is_trashed: number;
     background_color: number;
 }
@@ -32,7 +41,6 @@ export interface Env {
     IMAGES: R2Bucket;
     JWT_SECRET: string;
     ENV: string;
-    // V4.2 — Google OAuth (set via `wrangler secret put`)
     GOOGLE_CLIENT_ID?: string;
     GOOGLE_CLIENT_SECRET?: string;
 }

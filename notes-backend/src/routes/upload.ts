@@ -5,8 +5,16 @@ import { base64ToUint8Array, errorResponse, getBaseUrl, jsonResponse } from '../
  * POST /upload
  * Auth: required (router passes userId).
  * Body (JSON): { filename: string, content_type: string, data: string (base64) }
- * Returns: { id, url, r2_key, content_type, size }
+ * Returns: { id, url, r2_key, content_type, size, user_id }
+ *
+ * V5.3 — bounds the payload size to keep the Worker under its 128 MB
+ * memory cap. The previous version read everything into RAM via
+ * Base64.encodeToString, which OOM'd on multi-MB phone photos. We now
+ * refuse anything bigger than 8 MB pre-encoding and recommend the
+ * client resize before calling.
  */
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+
 export async function handleUpload(request: Request, env: Env, userId: number): Promise<Response> {
     let body: any;
     try {
@@ -28,7 +36,6 @@ export async function handleUpload(request: Request, env: Env, userId: number): 
 
     if (!data) return errorResponse('Missing field "data" (base64 encoded)', 400);
 
-    // Validate content type — only image/* for now.
     if (!contentType.startsWith('image/')) {
         return errorResponse('Only image/* content types are allowed', 400);
     }
@@ -40,7 +47,13 @@ export async function handleUpload(request: Request, env: Env, userId: number): 
         return errorResponse('Invalid base64 data', 400);
     }
 
-    // Sanitize filename: strip path separators and keep it short.
+    if (bytes.byteLength > MAX_IMAGE_BYTES) {
+        return errorResponse(
+            `Image too large (${bytes.byteLength} > ${MAX_IMAGE_BYTES}); resize before uploading`,
+            413
+        );
+    }
+
     const safeFilename = filename.replace(/[^\w.\-]/g, '_').slice(0, 100) || 'image';
 
     const id = crypto.randomUUID();
@@ -50,6 +63,14 @@ export async function handleUpload(request: Request, env: Env, userId: number): 
         httpMetadata: { contentType },
     });
 
+    // Record the upload so /files can authorize by user_id later.
+    await env.DB
+        .prepare(
+            'INSERT INTO images (id, user_id, r2_key, content_type, size_bytes) VALUES (?, ?, ?, ?, ?)'
+        )
+        .bind(id, userId, r2Key, contentType, bytes.byteLength)
+        .run();
+
     const url = `${getBaseUrl(request)}/files/${r2Key}`;
 
     return jsonResponse({
@@ -57,18 +78,29 @@ export async function handleUpload(request: Request, env: Env, userId: number): 
         url,
         r2_key: r2Key,
         content_type: contentType,
-        size: bytes.length,
+        size: bytes.byteLength,
+        user_id: userId,
     });
 }
 
 /**
  * GET /files/<key>
- * Public — serves a previously-uploaded image straight out of the R2 bucket.
+ * V5.3 — auth required. Author must be the user that originally uploaded
+ * the file. We do a single D1 lookup keyed on (r2_key, user_id); if no
+ * match, 404. This prevents cross-user leaks of R2 URLs while keeping
+ * the cache-friendly public CDN-friendly response (we still allow
+ * immutable long-cache on the response because the key itself contains
+ * a 128-bit UUID that's never reused).
  */
-export async function serveFile(path: string, env: Env): Promise<Response> {
-    // path begins with "/files/"; strip it.
+export async function serveFile(path: string, userId: number, env: Env): Promise<Response> {
     const key = path.startsWith('/files/') ? path.substring('/files/'.length) : '';
     if (!key) return errorResponse('Missing file key', 400);
+
+    const row = await env.DB
+        .prepare('SELECT r2_key FROM images WHERE r2_key = ? AND user_id = ? LIMIT 1')
+        .bind(key, userId)
+        .first<{ r2_key: string }>();
+    if (!row) return errorResponse('File not found', 404);
 
     const obj = await env.IMAGES.get(key);
     if (!obj) return errorResponse('File not found', 404);

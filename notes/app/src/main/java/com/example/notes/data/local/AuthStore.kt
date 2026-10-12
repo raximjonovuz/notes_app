@@ -200,23 +200,59 @@ object AuthStore {
 }
 
 /**
- * Lightweight persistence for the timestamp of the last successful sync.
- * The server uses millisecond epoch timestamps; null means "never synced,
- * fetch everything".
+ * V5.3 — replaces the previous `getLastSync` (milliseconds) with a
+ * monotonic sync cursor (`change_id` from the server's `change_log`).
+ * Missing the key still means "never synced, fall back to first-sync
+ * logic".
+ *
+ * Also persists BUG 8's pendingFlushVersion so a cold start can pick
+ * up a push that was queued by the previous process before it died.
  */
 object SyncStore {
 
     private const val PREFS = "sync_prefs"
-    private const val KEY_LAST_SYNC = "last_sync"
+    private const val KEY_LAST_CURSOR = "last_sync_cursor"
+    private const val KEY_LAST_PUSH_AT = "last_push_at"
+    private const val KEY_PENDING_FLUSH = "pending_flush_version"
 
-    fun getLastSync(context: Context): Long? {
+    /** Last server-side change_id we successfully drained. Null = never synced. */
+    fun getLastCursor(context: Context): Long? {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        return if (prefs.contains(KEY_LAST_SYNC)) prefs.getLong(KEY_LAST_SYNC, 0L) else null
+        return if (prefs.contains(KEY_LAST_CURSOR)) prefs.getLong(KEY_LAST_CURSOR, 0L) else null
     }
 
-    fun setLastSync(context: Context, timestamp: Long) {
+    fun setLastCursor(context: Context, cursor: Long) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
-            putLong(KEY_LAST_SYNC, timestamp)
+            putLong(KEY_LAST_CURSOR, cursor)
+            putLong(KEY_LAST_PUSH_AT, System.currentTimeMillis())
         }
+    }
+
+    /**
+     * V5.3 — backwards-compat shim. Returns 0 when never synced so older
+     * call sites (and tests) that still pass a Long keep working.
+     */
+    fun getLastSync(context: Context): Long = getLastCursor(context) ?: 0L
+
+    /**
+     * BUG 8 — store a monotonic version that bumps every time a push
+     * gets queued. Cold start compares the persisted version to the
+     * in-process one and re-runs the queued push if they differ,
+     * meaning the previous process was killed before it could drain.
+     */
+    fun bumpPendingFlush(context: Context): Long {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val next = (prefs.getLong(KEY_PENDING_FLUSH, 0L) and 0x7FFF_FFFF_FFFF_FFFFL) + 1
+        prefs.edit { putLong(KEY_PENDING_FLUSH, next) }
+        return next
+    }
+
+    fun consumePendingFlush(context: Context): Long {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val v = prefs.getLong(KEY_PENDING_FLUSH, 0L)
+        if (v != 0L) {
+            prefs.edit { putLong(KEY_PENDING_FLUSH, 0L) }
+        }
+        return v
     }
 }

@@ -8,6 +8,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.notes.data.local.NoteEntity
+import com.example.notes.data.local.AuthStore
 import com.example.notes.data.remote.ApiClient
 import com.example.notes.data.remote.NotesSyncRepository
 import com.example.notes.data.repository.NoteRepository
@@ -379,13 +380,13 @@ class NoteEditViewModel(
             appContext.contentResolver.openInputStream(pickedUri)?.use { input ->
                 val bytes = input.readBytes()
                 if (bytes.isEmpty()) return@use null
-                val ext = when {
-                    bytes.size >= 4 && bytes[0] == 0x89.toByte() &&
-                        bytes[1] == 0x50.toByte() && bytes[2] == 0x4E.toByte() -> "png"
-                    bytes.size >= 2 && bytes[0] == 0xFF.toByte() &&
-                        bytes[1] == 0xD8.toByte() -> "jpg"
-                    else -> "img"
-                }
+                // Use the byte-sniffer so PNG / WebP / GIF / HEIC all land
+                // with the right extension on disk (see ImageSniffer). The
+                // previous PNG/JPG-only check mis-classified every other
+                // format as `.img` and produced confusing "img_xxx.img"
+                // names that no other app could open.
+                val ext = com.example.notes.util.ImageSniffer
+                    .detect(bytes)?.ext ?: "img"
                 val out = java.io.File(
                     appContext.filesDir,
                     "img_${System.currentTimeMillis()}.$ext"
@@ -426,6 +427,7 @@ class NoteEditViewModel(
                     "NoteEditVM",
                     "addImageUri: launching R2 upload for $localUriString"
                 )
+                AuthStore.getActive(appContext)
                 val result = ApiClient.uploadImage(localUriString.toUri(), appContext)
                 result.fold(
                     onSuccess = { response ->
@@ -441,6 +443,11 @@ class NoteEditViewModel(
                         }
                         if (rewritten != fresh.blocks) {
                             _state.value = fresh.copy(blocks = rewritten)
+                            // saveNow() funnels through
+                            // performSaveLocked which ends with
+                            // pushLocalChangesDebounced() — that
+                            // already covers the new dirty bit, so we
+                            // don't need a separate push trigger here.
                             saveNow()
                         }
                     },

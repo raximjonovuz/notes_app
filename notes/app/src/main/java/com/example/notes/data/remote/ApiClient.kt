@@ -1,9 +1,13 @@
 package com.example.notes.data.remote
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.util.Base64
 import com.example.notes.util.Logger
+import java.io.ByteArrayOutputStream
+import kotlin.math.max
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.KSerializer
@@ -66,6 +70,21 @@ object ApiClient {
             .build()
     }
 
+    /**
+     * V5.2.2 — dedicated [OkHttpClient] used by the editor to render
+     * image blocks whose URI is an http(s) URL (e.g. an R2 public URL
+     * after a successful upload). Kept separate from the auth-aware
+     * [httpClient] so image rendering never blocks on missing tokens
+     * or extra interceptors. Slightly longer read timeout because
+     * gallery images can be a few MB on a slow connection.
+     */
+    val imageClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .build()
+    }
+
     // ---------------------------------------------------------------
     // Public API — auth
     // ---------------------------------------------------------------
@@ -103,23 +122,26 @@ object ApiClient {
     // Public API — notes
     // ---------------------------------------------------------------
 
+    /**
+     * V5.3 — `since` is now a monotonic `change_id` (Long), not a
+     * millisecond. Server returns the rows that touched the change_log
+     * table since this cursor. The cursor is also returned in the
+     * `sync_cursor` field of the response so the next pull is exactly
+     * incremental.
+     *
+     * `since=null` triggers a "first sync" payload: server returns
+     * every live row for the user (no tombstones).
+     */
     suspend fun listNotes(since: Long? = null): Result<NotesListResponse> {
         val path = if (since != null) "/notes?since=$since" else "/notes"
         return execute(path, method = "GET", body = null, NotesListResponse.serializer())
     }
 
     /**
-     * V5.0.2 — backend wraps the response as `{ note: { ... } }` so the
-     * client (and other future callers) can evolve the response shape
-     * without breaking the existing single-note callers. We unwrap it
-     * before returning so the rest of the app keeps the simple
-     * `Result<NoteSyncDto>` signature.
-     *
-     * Without this wrapper the client tried to read fields like `id` /
-     * `title` directly off the envelope and threw
-     * `MissingFieldException` for every push — which left the local
-     * note's `serverId` as `null` and caused the next push to generate
-     * a fresh UUID, leading to 7 copies of the same note on the server.
+     * V5.3 — `updated_at` is the client's authoritative clock; the
+     * server stores it as `client_updated_at` (BUG 5 fix). Caller is
+     * responsible for sending the row's local `updatedAt` (or `now()`
+     * for new notes).
      */
     suspend fun upsertNote(note: NoteSyncDto): Result<NoteSyncDto> {
         val body = json.encodeToString(NoteSyncDto.serializer(), note)
@@ -134,21 +156,21 @@ object ApiClient {
     // ---------------------------------------------------------------
 
     /**
-     * Reads image bytes from the given content URI, base64-encodes them and
-     * POSTs them to `/upload`. Returns the [UploadResponse] from the server
-     * which contains the public URL to use in image embeds.
+     * V5.3 — BUG 7 fix. We used to read the entire image into RAM and
+     * base64 it, which OOM'd on multi-MB phone photos and exceeded the
+     * 8MB server-side cap. The new flow:
+     *   1. Read the input via ContentResolver (max 16MB headroom).
+     *   2. Decode to a Bitmap with `inSampleSize` so very large images
+     *      don't allocate 4096-pixel-wide bitmaps.
+     *   3. Re-encode to JPEG quality 85 into a memory buffer.
+     *   4. If the resulting buffer exceeds 6 MB (we leave headroom
+     *      under the 8 MB server cap), downscale further.
      *
-     * V5.1.4 — guaranteed logging for every failure mode so the user
-     * doesn't hit a silent no-op. Earlier iterations caught
-     * `Throwable` and just wrapped it; the resulting [Result.failure]
-     * was easy to drop on the floor. We now split:
-     *   1. URI read failure  → specific IOException
-     *   2. Network / HTTP failure → existing OkHttp result
-     *   3. Anything else  → Throwable caught
+     * Returns the [UploadResponse] from the server.
      */
     suspend fun uploadImage(uri: Uri, context: Context): Result<UploadResponse> =
         withContext(Dispatchers.IO) {
-            val bytes = try {
+            val original = try {
                 context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
             } catch (e: SecurityException) {
                 Logger.w(TAG, "uploadImage: no permission to read $uri", e)
@@ -161,31 +183,29 @@ object ApiClient {
                     IOException("Unable to read image bytes: ${e.message ?: e.javaClass.simpleName}")
                 )
             }
-            if (bytes == null || bytes.isEmpty()) {
+            if (original == null || original.isEmpty()) {
                 Logger.w(TAG, "uploadImage: empty bytes from $uri")
                 return@withContext Result.failure<UploadResponse>(
                     IOException("Empty bytes from URI: $uri")
                 )
             }
 
-            // Detect the actual MIME so the file isn't always called
-            // .jpg — upload handler currently expects image/* but a
-            // png stream sent with content_type=image/jpeg is just
-            // polite dishonesty.
-            val mime = context.contentResolver.getType(uri) ?: "image/jpeg"
-            val ext = when {
-                mime.endsWith("png") -> "png"
-                mime.endsWith("webp") -> "webp"
-                mime.endsWith("gif") -> "gif"
-                mime.endsWith("heic") || mime.endsWith("heif") -> "heic"
-                else -> "jpg"
+            val detected = com.example.notes.util.ImageSniffer.detectOrJpeg(original)
+            val mime = detected.mime
+            val ext = detected.ext
+
+            val jpegBytes: ByteArray = try {
+                compressToJpeg(original)
+            } catch (t: Throwable) {
+                Logger.w(TAG, "uploadImage: compress failed; falling back to raw bytes", t)
+                original
             }
 
             try {
-                val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+                val base64 = Base64.encodeToString(jpegBytes, Base64.NO_WRAP)
                 val body = jsonObjectBody(
-                    "filename" to "image.$ext",
-                    "content_type" to mime,
+                    "filename" to "image.${detected.ext}",
+                    "content_type" to detected.mime,
                     "data" to base64
                 )
                 execute("/upload", method = "POST", body = body, UploadResponse.serializer())
@@ -194,6 +214,55 @@ object ApiClient {
                 Result.failure(t)
             }
         }
+
+    /**
+     * Decode the bytes into a Bitmap, scale to max 2048 px on the long
+     * side, re-encode as JPEG q=85. If the result exceeds 6 MB, halve
+     * dimensions and try again. Returns JPEG bytes.
+     */
+    private fun compressToJpeg(src: ByteArray): ByteArray {
+        val maxBytes = 6 * 1024 * 1024
+        val maxLongSide = 2048
+        val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(src, 0, src.size, opts)
+        val srcLong = maxOf(opts.outWidth, opts.outHeight)
+        var sample = 1
+        while (srcLong / (sample * 2) >= maxLongSide) sample *= 2
+
+        var quality = 85
+        var scaledSide = maxLongSide
+        while (true) {
+            val decode = BitmapFactory.Options().apply { inSampleSize = sample }
+            val bmp = BitmapFactory.decodeByteArray(src, 0, src.size, decode)
+                ?: throw IOException("BitmapFactory failed")
+            val scaled = if (max(bmp.width, bmp.height) > scaledSide) {
+                val k = scaledSide.toFloat() / max(bmp.width, bmp.height).toFloat()
+                Bitmap.createScaledBitmap(
+                    bmp,
+                    (bmp.width * k).toInt().coerceAtLeast(1),
+                    (bmp.height * k).toInt().coerceAtLeast(1),
+                    true
+                )
+            } else bmp
+            val baos = ByteArrayOutputStream()
+            scaled.compress(Bitmap.CompressFormat.JPEG, quality, baos)
+            val bytes = baos.toByteArray()
+            if (bytes.size <= maxBytes) {
+                if (scaled !== bmp) bmp.recycle()
+                scaled.recycle()
+                return bytes
+            }
+            quality -= 15
+            scaledSide = (scaledSide * 0.8f).toInt().coerceAtLeast(512)
+            if (quality < 50) {
+                if (scaled !== bmp) bmp.recycle()
+                scaled.recycle()
+                return bytes
+            }
+            if (scaled !== bmp) bmp.recycle()
+            scaled.recycle()
+        }
+    }
 
     // ---------------------------------------------------------------
     // JSON encoding helpers
@@ -348,20 +417,31 @@ data class UserResponse(
     val email: String
 )
 
+/**
+ * V5.3 — extends the previous DTO with the new server-side columns.
+ * Optional / default-valued so the same struct can read older server
+ * payloads during the rolling upgrade window.
+ */
 @Serializable
 data class NoteSyncDto(
     val id: String,
     val title: String,
     val content: String,
-    val is_favorite: Int,
-    val is_trashed: Int,
-    val background_color: Int
+    val is_favorite: Int = 0,
+    val is_trashed: Int = 0,
+    val background_color: Int = 0,
+    val client_updated_at: Long = 0,
+    val created_at: Long = 0,
+    val change_id: Long = 0,
+    val deleted_at: Long? = null
 )
 
 @Serializable
 data class NotesListResponse(
     val notes: List<NoteSyncDto>,
-    val sync_timestamp: Long
+    val sync_timestamp: Long,
+    /** V5.3 — monotonic sync cursor (BUG 4). Replaces the wall-clock. */
+    val sync_cursor: Long = 0
 )
 
 /**

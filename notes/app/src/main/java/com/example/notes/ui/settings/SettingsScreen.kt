@@ -109,7 +109,8 @@ fun SettingsScreen(
         scope.launch {
             lastBackupStatus = "Exporting…"
             try {
-                val notes = withContext(Dispatchers.IO) { notesDao.getNotesToPush(0) }
+                val backupUserId = com.example.notes.data.local.AuthStore.getActive(appContext)?.userId ?: 0
+                val notes = withContext(Dispatchers.IO) { notesDao.getAllNotesSnapshot(backupUserId) }
                 val written = withContext(Dispatchers.IO) {
                     BackupExporter.writeTo(appContext, notes, target)
                 }

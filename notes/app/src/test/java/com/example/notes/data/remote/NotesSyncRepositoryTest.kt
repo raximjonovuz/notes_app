@@ -73,7 +73,7 @@ class NotesSyncRepositoryTest {
     @After
     fun tearDown() {
         AuthStore.clearAll(context)
-        SyncStore.setLastSync(context, 0L)
+        SyncStore.setLastCursor(context, 0L)
         ApiClient.authToken = originalToken
         ApiClient.BASE_URL = originalBaseUrl
     }
@@ -162,24 +162,29 @@ class NotesSyncRepositoryTest {
     }
 
     @Test
-    fun `getNotesWithoutServerId only returns rows where serverId is null`() {
+    fun `getDirtyNotes returns rows where dirtyRevision is greater than lastSyncedRevision`() {
+        // BUG 1 regression: previously this was "WHERE serverId IS NULL".
+        // Now any local mutation, on any row, marks it dirty.
         dao.insert(
             NoteEntity(id = 1, title = "pushed", content = "x",
-                userId = 3, serverId = "server-1")
+                userId = 3, serverId = "server-1",
+                dirtyRevision = 1, lastSyncedRevision = 1)
         )
         dao.insert(
-            NoteEntity(id = 2, title = "unsynced", content = "y",
-                userId = 3, serverId = null)
+            NoteEntity(id = 2, title = "needs sync", content = "y",
+                userId = 3, serverId = null,
+                dirtyRevision = 1, lastSyncedRevision = 0)
         )
         dao.insert(
-            NoteEntity(id = 3, title = "pushed2", content = "z",
-                userId = 3, serverId = "server-2")
+            NoteEntity(id = 3, title = "dirty even after first sync", content = "z",
+                userId = 3, serverId = "server-2",
+                dirtyRevision = 2, lastSyncedRevision = 1)
         )
 
         val pending = dao.pendingForUser(3)
-        assertEquals(1, pending.size)
-        assertEquals(2L, pending[0].id)
-        assertEquals("unsynced", pending[0].title)
+        assertEquals(2, pending.size)
+        val ids = pending.map { it.id }.toSet()
+        assertEquals(setOf(2L, 3L), ids)
     }
 
     @Test
@@ -216,6 +221,8 @@ class NotesSyncRepositoryTest {
      * production. The non-suspend `insert` / `update` helpers let
      * test cases stay plain @Test functions without a `runBlocking`
      * around every line.
+     *
+     * V5.3 — adds the new soft-delete + dirty-revision + purge methods.
      */
     private class FakeNoteDao : NoteDao {
         private val nextId = AtomicLong(1L)
@@ -251,7 +258,7 @@ class NotesSyncRepositoryTest {
             }
 
         fun pendingForUser(userId: Int): List<NoteEntity> =
-            rows.filter { it.serverId == null && it.userId == userId }
+            rows.filter { it.dirtyRevision > it.lastSyncedRevision && it.userId == userId }
 
         fun migrateAnonymousTo(userId: Int): Int {
             val targets = rows.filter { it.userId == 0 }
@@ -263,11 +270,24 @@ class NotesSyncRepositoryTest {
 
         override suspend fun insertNote(note: NoteEntity): Long = insert(note)
         override suspend fun updateNote(note: NoteEntity) { update(note) }
+        override suspend fun softDeleteNote(id: Long, now: Long) {
+            val idx = rows.indexOfFirst { it.id == id }
+            if (idx >= 0) {
+                rows[idx] = rows[idx].copy(
+                    deletedAt = now,
+                    dirtyRevision = rows[idx].dirtyRevision + 1,
+                    updatedAt = now
+                )
+            }
+        }
         override suspend fun deleteNote(note: NoteEntity) { rows.removeAll { it.id == note.id } }
         override suspend fun deleteNoteById(id: Long) { rows.removeAll { it.id == id } }
+        override suspend fun purgeNoteById(id: Long) { rows.removeAll { it.id == id } }
 
         override fun getAllNotes(userId: Int): Flow<List<NoteEntity>> =
-            MutableStateFlow(rows.filter { it.userId == userId && !it.isTrashed })
+            MutableStateFlow(
+                rows.filter { it.userId == userId && !it.isTrashed && it.deletedAt == null }
+            )
         override suspend fun getNoteById(id: Long): NoteEntity? = getRowById(id)
         override fun searchNotes(query: String, userId: Int): Flow<List<NoteEntity>> =
             MutableStateFlow(emptyList())
@@ -293,10 +313,43 @@ class NotesSyncRepositoryTest {
 
         override suspend fun getNotesWithServerId(): List<NoteEntity> =
             rows.filter { !it.serverId.isNullOrEmpty() }
-        override suspend fun getNotesWithoutServerId(userId: Int): List<NoteEntity> =
-            rows.filter { it.serverId == null && it.userId == userId }
-        override suspend fun getNotesToPush(userId: Int): List<NoteEntity> =
-            rows.filter { it.userId == userId }
+        override suspend fun getDirtyNotes(userId: Int): List<NoteEntity> =
+            rows.filter {
+                it.userId == userId &&
+                it.dirtyRevision > it.lastSyncedRevision &&
+                (it.deletedAt == null || it.serverChangeId == 0L)
+            }
+        override suspend fun getDirtyNotesBounded(userId: Int, limit: Int): List<NoteEntity> =
+            getDirtyNotes(userId).take(limit)
+        override suspend fun countDirtyNotes(userId: Int): Int = getDirtyNotes(userId).size
+        override suspend fun markSynced(
+            localId: Long,
+            syncedRev: Int,
+            serverChangeId: Long,
+            serverUpdatedAt: Long
+        ) {
+            val idx = rows.indexOfFirst { it.id == localId }
+            if (idx >= 0) {
+                val cur = rows[idx]
+                rows[idx] = cur.copy(
+                    lastSyncedRevision = syncedRev,
+                    dirtyRevision = syncedRev,
+                    serverChangeId = serverChangeId,
+                    serverUpdatedAt = serverUpdatedAt,
+                    baseTitle = cur.title,
+                    baseContent = cur.content
+                )
+            }
+        }
+        override suspend fun bumpDirty(id: Long, now: Long) {
+            val idx = rows.indexOfFirst { it.id == id }
+            if (idx >= 0) {
+                rows[idx] = rows[idx].copy(
+                    dirtyRevision = rows[idx].dirtyRevision + 1,
+                    updatedAt = now
+                )
+            }
+        }
         override suspend fun migrateAnonymousNotesToUser(userId: Int): Int {
             val targets = rows.filter { it.userId == 0 }
             targets.forEach { update(it.copy(userId = userId)) }

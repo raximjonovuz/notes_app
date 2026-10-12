@@ -141,28 +141,23 @@ class NotesListViewModel(
         _searchQuery.value = query
     }
 
+/**
+     * V5.3 — soft-delete with server confirmation. The local row is
+     * marked with `deletedAt` immediately (so it disappears from the
+     * list view and is excluded from the next push's "live" pass). The
+     * server-side DELETE happens via the next push round-trip; once
+     * the pull side sees the server's tombstone in `change_log`, the
+     * row is purged from the local DB.
+     *
+     * BUG 2 fix: there is no longer a path where the local row is
+     * gone but the server still has it. If the user is offline, the
+     * row is only hidden locally, the server row is preserved, and a
+     * later push will issue the DELETE for us.
+     */
     fun deleteNote(note: NoteEntity) {
         viewModelScope.launch {
-            // V4.4: try to DELETE on the server *before* dropping the local
-            // row. If the network call fails we still keep the local row
-            // (so the user doesn't lose data) and the next push will
-            // turn it into a regular upsert — i.e. the local copy is
-            // always the source of truth until the server confirms a
-            // delete.
-            val serverId = note.serverId
-            if (serverId != null) {
-                try {
-                    val ok = syncRepository.deleteOnServer(serverId)
-                    if (ok) {
-                        Logger.d("NotesListVM", "deleteNote: server delete ok for $serverId")
-                    } else {
-                        Logger.w("NotesListVM", "deleteNote: server delete failed for $serverId")
-                    }
-                } catch (t: Throwable) {
-                    Logger.w("NotesListVM", "deleteNote: server delete threw", t)
-                }
-            }
             repository.deleteNote(note)
+            pushSilently()
         }
     }
 
