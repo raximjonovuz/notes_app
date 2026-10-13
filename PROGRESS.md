@@ -2,7 +2,7 @@
 
 > **Muallif:** Raximjonov  
 > **Repository:** https://github.com/raximjonovuz/notes_app.git  
-> **Status:** V4.2 (Google OAuth — Continue with Google tugmasi ishlayapti)
+> **Hozirgi status:** **V5.3.3 (Android) + V5.3 (Backend)** — rasm yuklash 4 ta kritik bug'i tuzatildi, backend qayta deploy qilindi, JWT_SECRET rotatsiya qilindi
 
 ---
 
@@ -19,6 +19,87 @@ C:\Users\user\AndroidStudioProjects\
     ├── wrangler.toml
     └── ...
 ```
+
+---
+
+## ✅ V5.3 (2026-10-12 → 2026-10-13) — Image Upload Pipeline Fix
+
+> Bu V5.3 versiyasi **rasm saqlash ishlamayapti** muammosini hal qildi. Birinchi
+> audit 4 ta kritik xatoni aniqladi (agent yordamida). Ulardan keyin 3 ta qo'shimcha
+> muammo va 1 ta xavfsizlik muammosi ham topildi.
+
+### Texnologiyalar (V5.3 da qo'shildi)
+- **`change_log` jadvali** — sinxronizatsiya uchun monotonic cursor (`change_id`)
+- **`soft_delete`** — `deleted_at` timestamp (ghost-note resurrection race oldini olish)
+- **3-way merge** — `baseTitle`/`baseContent` bilan conflict detection
+- **OkHttp `Interceptor`** — har bir so'rovda bearer token avtomatik
+- **JWT_SECRET rotatsiya** — GitHub'da expose bo'lgan secret yangilandi
+
+### Topilgan 4 ta kritik bug' (V5.3.0 da tuzatildi)
+
+| # | Xato | Tuzatish | Fayl |
+|---|------|----------|------|
+| **CRIT-1** | `mime`/`ext` aniqlanib, lekin hech qachon ishlatilmasdi. PNG/WEBP/HEIC `.jpg` deb saqlanardi. | `detected.mime` va `detected.ext` `jsonObjectBody()` ga uzatildi. | `ApiClient.kt:207-208` |
+| **CRIT-2** | `imageClient` da `Authorization` header yo'q. Backend V5.3 da `/files/<key>` endi auth talab qiladi. | `LoadedImage.kt` da har bir so'rovda token qo'lda qo'shilar edi. | `LoadedImage.kt:74-80` |
+| **CRIT-3** | `ready` filtri `pendingFlush` markerini tozalardi, lekin qayta urinish rejalashtirmasdi. Agar upload xato bersa, note abadiy "tayyor emas" holatida qolardi. | Yangi `schedulePendingImagePush()` metodi qo'shildi. | `NotesSyncRepository.kt:435-446` |
+| **CRIT-4** | Cold start da `authToken=null` bo'lib qolardi. Birinchi rasm qo'shganda 401 xatosi. | `AuthStore.getActive()` upload dan oldin chaqiriladi. | `NoteEditViewModel.kt:429` |
+
+### V5.3.1 — HEIC timeout
+- Katta rasmlar (1-2 MB) 15 soniyada timeout bo'lib, rasm telefonda qolib ketar edi
+- `httpClient.writeTimeout` 15s → 60s ga oshirildi
+- `versionCode` 23→24, `versionName` 5.3.0→5.3.1
+
+### V5.3.2 — imageClient interceptor
+- `imageClient` ga OkHttp `Interceptor` qo'shildi — har bir so'rovda avtomatik
+  `Bearer` token (oldingi qo'lda qo'shish esdan chiqib ketishi mumkin edi)
+- Diagnostic logging qo'shildi (HTTP code, bytes, auth presence)
+- `versionCode` 24→25, `versionName` 5.3.1→5.3.2
+
+### V5.3.3 — Backend deploy + JWT rotatsiya
+- **Backend**: 2026-10-09 dan beri deploy qilinmagan edi. `wrangler deploy` ishlatib,
+  source kod production'ga sinxronlashtirildi. Eski rasm `/files/<key>` 404 qaytarar edi
+  (Worker eski versiyada edi). Hamma rasm endi 200 qaytaryapti.
+- **JWT_SECRET**: GitHub'da ochiq turgan edi (V3.0 davrida `wrangler.toml [vars]` ga
+  qo'yilgan). Yangi 32-byte random secret yaratildi va faqat Cloudflare secret'ga
+  o'tkazildi. `wrangler.toml` dan o'chirildi. Eski tokenlar bekor qilindi —
+  barcha foydalanuvchilar qayta login qilishi kerak.
+- `versionCode` 25→26, `versionName` 5.3.2→5.3.3
+
+### Yangi / o'zgartirilgan fayllar (V5.3)
+
+**Backend:**
+- `migrations/0002_soft_delete_and_change_tracking.sql` (yangi) — `change_log` jadvali
+- `migrations/0003_image_user_index.sql` (yangi) — `idx_images_r2_user` indeksi
+- `src/routes/upload.ts` — `/files/<key>` auth-gated, `(r2_key, user_id)` tekshiruvi
+- `src/routes/notes.ts` — 3-way merge, soft-delete, `change_log` yuritish
+- `wrangler.toml` — JWT_SECRET o'chirildi (faqat Cloudflare secret'da)
+
+**Android:**
+- `ApiClient.kt:74-86` — `imageClient` interceptor (V5.3.2)
+- `ApiClient.kt:207-208` — MIME/extension to'g'ri uzatiladi (V5.3.0)
+- `ApiClient.kt:65-71` — writeTimeout 60s (V5.3.1)
+- `LoadedImage.kt` — auth header qo'lda (V5.3.0), keyinroq interceptor (V5.3.2)
+- `NotesSyncRepository.kt:435-446` — `schedulePendingImagePush()` (V5.3.0)
+- `NotesSyncRepository.kt:495-499` — ready filter endi reschedule qiladi
+- `NoteEditViewModel.kt:429` — `AuthStore.getActive()` chaqirig'i (V5.3.0)
+- `ImageSniffer.kt` — detect/detectOrJpeg helper
+- `util/LoadedImage.kt` — IO-dispatcher image loader
+
+### Sinov natijalari (V5.3.3 da)
+| Test | Natija |
+|------|-------|
+| JPG rasm qo'shish (33602 bytes) | ✅ Upload 200, sync OK |
+| HEIC rasm (959548 bytes) | ✅ Endi timeout bo'lmaydi (60s) |
+| `/files/<key>` (eski rasm) | ✅ 200 + 32845 bytes |
+| `/files/<key>` (yangi rasm) | ✅ 200 + image bytes |
+| Eski JWT bilan auth | ❌ 401 (rotation tufayli) |
+| Yangi JWT bilan auth | ✅ 200 |
+
+### Oldingi V4.2 dan keyin
+- Backend V5.3 kod yozilgan, lekin **DEPLOY QILINMAGAN** edi (2026-10-09 dan beri).
+  `DEPLOY_V5_3.md` da "NOT executed by opencode — Cloudflare access is not
+  available" deb yozilgan. V5.3.3 release'da bu deploy qilindi.
+
 
 ---
 
