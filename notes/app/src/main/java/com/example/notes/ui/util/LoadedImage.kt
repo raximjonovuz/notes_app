@@ -71,16 +71,27 @@ private fun loadImageBitmapFromUri(
         val uri = uriString.toUri()
         val input = when (uri.scheme) {
             "http", "https" -> {
-                val request = okhttp3.Request.Builder()
-                    .url(uriString)
-                    .apply {
-                        ApiClient.authToken?.let { token ->
-                            header("Authorization", "Bearer $token")
-                        }
-                    }
-                    .build()
+                val hasToken = !ApiClient.authToken.isNullOrBlank()
+                Logger.d(
+                    "NoteEditScreen",
+                    "loadImageBitmapFromUri: fetching $uriString (auth=${if (hasToken) "yes" else "NO"})"
+                )
+                val request = okhttp3.Request.Builder().url(uriString).build()
                 ApiClient.imageClient.newCall(request).execute().use { resp ->
-                    if (!resp.isSuccessful) null else resp.body?.byteStream()
+                    if (!resp.isSuccessful) {
+                        Logger.w(
+                            "NoteEditScreen",
+                            "loadImageBitmapFromUri: HTTP ${resp.code} for $uriString " +
+                                "(auth=${if (hasToken) "yes" else "NO"})"
+                        )
+                        null
+                    } else {
+                        Logger.d(
+                            "NoteEditScreen",
+                            "loadImageBitmapFromUri: HTTP ${resp.code} (${resp.body?.contentLength() ?: -1} bytes)"
+                        )
+                        resp.body?.byteStream()
+                    }
                 }
             }
             else -> context.contentResolver.openInputStream(uri)

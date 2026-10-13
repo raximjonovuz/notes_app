@@ -57,15 +57,17 @@ object ApiClient {
     }
 
     /**
-     * V4.4 — single OkHttp instance for the whole process. Timeouts are
-     * intentionally aggressive (15s) because notes syncing is best-effort
-     * and the user can always retry manually.
+     * V4.4 — single OkHttp instance for the whole process.
+     * V5.3.1 — writeTimeout bumped to 60s for large image uploads
+     * (HEIC originals can be 1-2 MB; base64-encoded to ~1.5 MB JSON,
+     * which can take 30+ s on a slow 4G connection). Connect / read
+     * stay at 15 s because notes sync metadata is tiny.
      */
     private val httpClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)
-            .writeTimeout(15, TimeUnit.SECONDS)
+            .writeTimeout(60, TimeUnit.SECONDS)
             .retryOnConnectionFailure(true)
             .build()
     }
@@ -73,15 +75,33 @@ object ApiClient {
     /**
      * V5.2.2 — dedicated [OkHttpClient] used by the editor to render
      * image blocks whose URI is an http(s) URL (e.g. an R2 public URL
-     * after a successful upload). Kept separate from the auth-aware
-     * [httpClient] so image rendering never blocks on missing tokens
-     * or extra interceptors. Slightly longer read timeout because
-     * gallery images can be a few MB on a slow connection.
+     * after a successful upload).
+     *
+     * V5.3.2 — interceptor injects the current bearer token on every
+     * request. The backend's `/files/<key>` endpoint requires
+     * Authorization (the V5.3 security fix) and the previous approach
+     * of attaching the header at the call site missed requests made
+     * before [authToken] was primed (e.g. immediately after process
+     * restart when the user opens a note before any sync has run).
+     * Slightly longer read timeout because gallery images can be a few
+     * MB on a slow connection.
      */
     val imageClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
+            .addInterceptor { chain ->
+                val original = chain.request()
+                val token = authToken
+                val request = if (!token.isNullOrBlank()) {
+                    original.newBuilder()
+                        .header("Authorization", "Bearer $token")
+                        .build()
+                } else {
+                    original
+                }
+                chain.proceed(request)
+            }
             .build()
     }
 
