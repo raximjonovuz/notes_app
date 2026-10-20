@@ -27,7 +27,15 @@ data class AuthUiState(
     val sessionEmail: String? = null,
     val savedAccounts: List<AuthStore.Session> = emptyList(),
     val activeEmail: String? = null,
-    val isGoogleLoading: Boolean = false
+    val isGoogleLoading: Boolean = false,
+    /**
+     * C3 — per-attempt replay-protection nonce. The login screen
+     * generates a random UUID, hashes it with SHA-256 (the value
+     * forwarded to Google), and stashes the *raw* form here so
+     * [submitGoogle] can send it to the backend for one-time
+     * validation. Cleared on every attempt (success or failure).
+     */
+    val pendingNonce: String? = null
 )
 
 class AuthViewModel(
@@ -81,54 +89,100 @@ class AuthViewModel(
      * V4.2 — Continue with Google. The [LoginScreen]'s launcher hands us
      * the id token, we forward it to the backend for verification + JWT
      * issuance, and update the active session on success.
+     *
+     * C3 — the optional [nonce] is the raw form of the value that was
+     * SHA-256-hashed before being passed to Google as a `nonce` request
+     * param. The backend stores the raw nonce for 5 minutes (D1
+     * `auth_nonces` table) and rejects any Google ID token whose
+     * `nonce` claim doesn't match a still-valid entry. This is a no-op
+     * (null) when the deployment hasn't enabled nonce validation yet,
+     * so old clients keep working.
      */
-    fun submitGoogle(idToken: String) {
+    fun submitGoogle(idToken: String, nonce: String? = null) {
         val s = _state.value
         if (s.isGoogleLoading) return
         _state.value = s.copy(isGoogleLoading = true, errorMessage = null)
         viewModelScope.launch {
-            val result = repository.googleLogin(idToken)
+            val result = repository.googleLogin(idToken, nonce)
             result.onSuccess { session ->
                 _state.value = _state.value.copy(
                     isGoogleLoading = false,
                     isAuthenticated = true,
                     sessionEmail = session.email,
                     savedAccounts = repository.allSessions(),
-                    activeEmail = session.email
+                    activeEmail = session.email,
+                    pendingNonce = null
                 )
             }.onFailure { err ->
                 _state.value = _state.value.copy(
                     isGoogleLoading = false,
-                    errorMessage = err.localizedMessage ?: "Google sign-in failed."
+                    errorMessage = err.localizedMessage ?: "Google sign-in failed.",
+                    pendingNonce = null
                 )
             }
         }
     }
 
-    fun clearGoogleError() {
-        _state.value = _state.value.copy(errorMessage = null, isGoogleLoading = false)
+    /**
+     * C3 — stash the per-attempt replay-protection nonce so that
+     * [submitGoogle] can forward it to the backend. Called from the
+     * LoginScreen right before launching Credential Manager.
+     */
+    fun setPendingNonce(rawNonce: String) {
+        _state.value = _state.value.copy(pendingNonce = rawNonce)
     }
 
     /**
-     * Clears the active session pointer but keeps the saved account so
-     * the user can re-pick it from the Login screen without re-authing
-     * with Google. Mirrors the V3.2 behavior.
+     * C3 — called the moment the user taps "Continue with Google".
+     * Clears any previous error and disables double-tap (the button
+     * also has its own `inFlight` guard, this is the ViewModel-side
+     * mirror used by tests).
+     */
+    fun beginGoogleAttempt() {
+        _state.value = _state.value.copy(errorMessage = null, isGoogleLoading = true)
+    }
+
+    fun clearGoogleError() {
+        _state.value = _state.value.copy(errorMessage = null, isGoogleLoading = false, pendingNonce = null)
+    }
+
+    /**
+     * C3 — show a specific, human-readable error string from the
+     * Credential Manager flow (e.g. "No Google account on device").
+     */
+    fun setGoogleError(message: String) {
+        _state.value = _state.value.copy(
+            errorMessage = message,
+            isGoogleLoading = false,
+            pendingNonce = null
+        )
+    }
+
+    /**
+     * C1 — signs out of the active account, fire-and-forget. The
+     * server POST and the local store wipe happen on the IO
+     * dispatcher (suspend repository methods); we update the UI
+     * synchronously so the next screen shows the logged-out state
+     * without waiting for the network round-trip.
      */
     fun logoutActive() {
         if (repository.activeSession() == null) return
-        repository.logoutActiveKeepSessions()
-        val saved = repository.allSessions()
+        viewModelScope.launch {
+            repository.logoutActiveKeepSessions()
+        }
         _state.value = _state.value.copy(
-            savedAccounts = saved,
+            savedAccounts = emptyList(),
             activeEmail = null,
             sessionEmail = null,
             isAuthenticated = false
         )
     }
 
-    /** Wipes every saved session. */
+    /** C1 — wipes every saved session; best-effort server revocation. */
     fun logoutAll() {
-        repository.clearAll()
+        viewModelScope.launch {
+            repository.clearAll()
+        }
         _state.value = _state.value.copy(
             savedAccounts = emptyList(),
             activeEmail = null,

@@ -13,6 +13,19 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.TextUnitType
 import java.util.UUID
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.int
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 
 /**
  * A piece of a note. A note is a list of blocks rendered in order, like
@@ -33,6 +46,13 @@ import java.util.UUID
  *
  *   Per-character bold / italic / underline / color are stored in
  *   [styleRanges]; the previous V2.5 block-level flags are gone.
+ *
+ * B9 — on-disk format moved to JSON v2. Each note's content is
+ *   `{"v":2,"blocks":[{...},{...}]}` so multi-line TextBlocks survive
+ *   a save/reopen round-trip and per-line fields (fontSizesByLine,
+ *   listTypesByLine) round-trip too. Legacy `|||IMG:...|||` notes are
+ *   still parsed by the fallback path; they are re-saved in the v2
+ *   format on the next save.
  */
 sealed class ContentBlock {
     abstract val id: String
@@ -174,8 +194,9 @@ internal const val TEXT_BLOCK_HEADER_SUFFIX = ">"
 
 /**
  * Parse a serialized content String back into a list of ContentBlocks.
- * Supports V2.6 (with `S<range-payload>` after the per-block header) and
- * V2.5 (`<b|i|u|s|a|c|l|k>` headers) and pure text. Field-by-field:
+ * B9 — recognises the v2 JSON envelope first, then falls back to the
+ * legacy `|||IMG:...|||` line-prefixed format. Field-by-field:
+ *   - v2 JSON:    {"v":2,"blocks":[{...},{...}]}  (multi-line safe)
  *   - V2.6 header: <s|a|l|k>S<encoded ranges>body
  *   - V2.5 header: <b|i|u|s|a|c|l|k>body  (b/i/u/c are block-level flags
  *     used by V2.5 — we honor them by converting them into a single
@@ -184,6 +205,13 @@ internal const val TEXT_BLOCK_HEADER_SUFFIX = ">"
  */
 fun parseBlocksFromContent(raw: String): List<ContentBlock> {
     if (raw.isEmpty()) return emptyList()
+    // B9 — JSON v2 envelope detection. Trimming the leading whitespace
+    // is intentional: a future migration that prepends a BOM or
+    // accidentally injects a leading \n shouldn't break the detection.
+    val trimmed = raw.trimStart()
+    if (trimmed.startsWith("{\"v\":2") || trimmed.startsWith("{\"v\": 2")) {
+        return parseBlocksFromJsonV2(trimmed)
+    }
     val blocks = mutableListOf<ContentBlock>()
 
     var i = 0
@@ -330,22 +358,223 @@ private fun serializeTextBlock(block: ContentBlock.TextBlock): String {
 
 /**
  * Serialize a list of blocks back into a single content String for Room.
+ *
+ * B9 — always emits the v2 JSON envelope so multi-line TextBlocks,
+ * `fontSizesByLine`, and `listTypesByLine` round-trip correctly. The
+ * legacy `<flags>S<ranges>body` / `|||IMG:...|||` parser stays in
+ * place so old notes still open, but the next save will overwrite
+ * their content in the new format.
  */
 fun serializeBlocksToContent(blocks: List<ContentBlock>): String {
     if (blocks.isEmpty()) return ""
-    val sb = StringBuilder()
-    blocks.forEach { block ->
-        when (block) {
-            is ContentBlock.TextBlock -> {
-                if (sb.isNotEmpty() && sb.last() != '\n') sb.append('\n')
-                sb.append(serializeTextBlock(block))
-            }
-            is ContentBlock.ImageBlock -> {
-                sb.append(IMG_TOKEN_PREFIX).append(block.uri).append(IMG_TOKEN_SUFFIX)
+    return serializeBlocksToJsonV2(blocks)
+}
+
+/* -----------------------------------------------------------------------
+ * v2 JSON serialization
+ *
+ * Format:
+ *   {"v":2,"blocks":[
+ *     {"t":"text","text":"...","fontSize":1,"align":0,"list":0,
+ *      "check":false,"ranges":[...],"fontSizesByLine":{...},
+ *      "listTypesByLine":{...}},
+ *     {"t":"img","uri":"..."}
+ *   ]}
+ *
+ * Numeric keys (fontSize, align, list) are kept short to minimise
+ * the on-disk size — these payloads go through the backend's 1 MB
+ * `content` cap.
+ * --------------------------------------------------------------------- */
+
+@Serializable
+private data class JsonBlockText(
+    val t: String = "text",
+    val text: String = "",
+    val fontSize: Int = 1,
+    val align: Int = 0,
+    val list: Int = 0,
+    val check: Boolean = false,
+    val ranges: List<StyleRange> = emptyList(),
+    val fontSizesByLine: Map<Int, Int> = emptyMap(),
+    val listTypesByLine: Map<Int, Int> = emptyMap()
+)
+
+@Serializable
+private data class JsonBlockImage(
+    val t: String = "img",
+    val uri: String
+)
+
+private val v2Json: Json = Json {
+    // V2 format only has known fields; if a newer build adds one we
+    // don't want an older build to crash, we want a silent skip.
+    ignoreUnknownKeys = true
+    // Encode booleans as `true`/`false` (not `0`/`1`).
+    encodeDefaults = true
+}
+
+private fun serializeBlocksToJsonV2(blocks: List<ContentBlock>): String {
+    val out = buildJsonArray {
+        for (b in blocks) {
+            when (b) {
+                is ContentBlock.TextBlock -> add(
+                    v2Json.encodeToJsonElement(
+                        JsonBlockText.serializer(),
+                        JsonBlockText(
+                            text = b.text,
+                            fontSize = b.fontSize,
+                            align = b.textAlign,
+                            list = b.listType,
+                            check = b.isChecklist,
+                            ranges = b.styleRanges,
+                            fontSizesByLine = b.fontSizesByLine,
+                            listTypesByLine = b.listTypesByLine
+                        )
+                    )
+                )
+                is ContentBlock.ImageBlock -> add(
+                    v2Json.encodeToJsonElement(
+                        JsonBlockImage.serializer(),
+                        JsonBlockImage(uri = b.uri)
+                    )
+                )
             }
         }
     }
-    return sb.toString()
+    return buildJsonObject {
+        put("v", 2)
+        put("blocks", out)
+    }.toString()
+}
+
+private fun parseBlocksFromJsonV2(raw: String): List<ContentBlock> {
+    return try {
+        val root = Json.parseToJsonElement(raw).jsonObject
+        val arr = root["blocks"]?.jsonArray ?: return emptyList()
+        val out = mutableListOf<ContentBlock>()
+        for (el in arr) {
+            val obj = el.jsonObject
+            val t = obj["t"]?.jsonPrimitive?.contentOrNull
+            when (t) {
+                "text" -> {
+                    val text = obj["text"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                    val fontSize = obj["fontSize"]?.jsonPrimitive?.intOrNull ?: 1
+                    val align = obj["align"]?.jsonPrimitive?.intOrNull ?: 0
+                    val list = obj["list"]?.jsonPrimitive?.intOrNull ?: 0
+                    val check = obj["check"]?.jsonPrimitive?.boolean ?: false
+                    val ranges = obj["ranges"]?.jsonArray?.mapNotNull {
+                        runCatching { v2Json.decodeFromJsonElement(StyleRange.serializer(), it) }
+                            .getOrNull()
+                    } ?: emptyList()
+                    val fontSizesByLine = parseIntMap(obj["fontSizesByLine"])
+                    val listTypesByLine = parseIntMap(obj["listTypesByLine"])
+                    out += ContentBlock.TextBlock(
+                        text = text,
+                        styleRanges = ranges,
+                        fontSize = fontSize.coerceIn(0, TEXT_SIZE_VALUES.lastIndex),
+                        textAlign = align.coerceIn(0, 2),
+                        listType = list.coerceIn(0, 2),
+                        isChecklist = check,
+                        fontSizesByLine = fontSizesByLine,
+                        listTypesByLine = listTypesByLine
+                    )
+                }
+                "img" -> {
+                    val uri = obj["uri"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                    if (uri.isNotEmpty()) {
+                        out += ContentBlock.ImageBlock(uri = uri)
+                    }
+                }
+                else -> {
+                    // Unknown block type — skip rather than crash.
+                }
+            }
+        }
+        out
+    } catch (t: Throwable) {
+        // Malformed JSON — fall back to legacy parser. The legacy
+        // parser will produce at least the text/IMG tokens it can
+        // recognise; anything it can't will be lost, but a parse
+        // error shouldn't lose the whole note.
+        parseBlocksFromLegacy(raw)
+    }
+}
+
+private fun parseIntMap(el: kotlinx.serialization.json.JsonElement?): Map<Int, Int> {
+    if (el == null) return emptyMap()
+    val obj = el as? JsonObject ?: return emptyMap()
+    val out = mutableMapOf<Int, Int>()
+    for ((k, v) in obj) {
+        val ki = k.toIntOrNull() ?: continue
+        val vi = (v as? kotlinx.serialization.json.JsonPrimitive)?.intOrNull ?: continue
+        out[ki] = vi
+    }
+    return out
+}
+
+/** Fallback when JSON v2 parsing fails — re-uses the legacy
+ *  `<flags>S<ranges>body` / `|||IMG:...|||` parser. Public so the
+ *  test suite can hit it directly. */
+fun parseBlocksFromLegacy(raw: String): List<ContentBlock> {
+    if (raw.isEmpty()) return emptyList()
+    val blocks = mutableListOf<ContentBlock>()
+    var i = 0
+    val len = raw.length
+    val textBuf = StringBuilder()
+    fun flushTextBuffer() {
+        val chunk = textBuf.toString()
+        textBuf.setLength(0)
+        if (chunk.isEmpty()) return
+        val lines = chunk.split('\n')
+        var plainAccumulator = StringBuilder()
+        fun flushPlain() {
+            val text = plainAccumulator.toString()
+            plainAccumulator.setLength(0)
+            if (text.isNotEmpty()) {
+                blocks += ContentBlock.TextBlock(text = text)
+            }
+        }
+        for (line in lines) {
+            if (line.isEmpty()) {
+                flushPlain()
+                blocks += ContentBlock.TextBlock(text = "")
+                continue
+            }
+            val parsed = parseTextBlockHeader(line)
+            if (parsed != null) {
+                flushPlain()
+                blocks += parsed
+            } else {
+                if (plainAccumulator.isNotEmpty()) plainAccumulator.append('\n')
+                plainAccumulator.append(line)
+            }
+        }
+        flushPlain()
+    }
+    while (i < len) {
+        val imgIdx = raw.indexOf(IMG_TOKEN_PREFIX, i)
+        if (imgIdx < 0) {
+            textBuf.append(raw.substring(i))
+            i = len
+            break
+        }
+        if (imgIdx > i) {
+            textBuf.append(raw.substring(i, imgIdx))
+        }
+        flushTextBuffer()
+        val uriStart = imgIdx + IMG_TOKEN_PREFIX.length
+        val endIdx = raw.indexOf(IMG_TOKEN_SUFFIX, uriStart)
+        if (endIdx < 0) {
+            textBuf.append(raw.substring(imgIdx))
+            i = len
+            break
+        }
+        val uri = raw.substring(uriStart, endIdx)
+        blocks += ContentBlock.ImageBlock(uri = uri)
+        i = endIdx + IMG_TOKEN_SUFFIX.length
+    }
+    flushTextBuffer()
+    return blocks
 }
 
 /** Pure-text view of blocks (for backward-compat / search / preview). */

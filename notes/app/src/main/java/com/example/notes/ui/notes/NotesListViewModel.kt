@@ -228,29 +228,33 @@ class NotesListViewModel(
         if (_syncStatus.value.syncing) return
         _syncStatus.value = _syncStatus.value.copy(syncing = true, error = null)
         viewModelScope.launch {
-            // V5.0.2: flush any pending debounced push first (force) so
-            // we don't wait the 5-second window, then pull server updates.
-            // If the device is offline the flush is a no-op and we still
-            // get the server pull.
-            val pushed = syncRepository.flushPendingPush()
-            val success = syncRepository.syncIfOnline()
-            if (pushed > 0) {
-                Logger.d("NotesListVM", "syncNow: pushed $pushed pending note(s) before pull")
-            }
-            _syncStatus.value = if (success) {
-                // lastSyncAgoMs stores the absolute epoch-ms of the last
-                // successful sync; the UI computes the human-readable "ago"
-                // string off this value.
-                SyncStatus(
+            // B2: syncIfOnline now runs pull → push internally. We don't
+            // need a separate flushPendingPush here — the sync repository
+            // drains the queue inside the same mutex. Kept as a no-cost
+            // safety net in case the debounce timer is mid-flight: a
+            // flushPendingPush just runs the same push pass under the
+            // same mutex and returns immediately.
+            val outcome = syncRepository.syncIfOnline()
+            _syncStatus.value = when (outcome) {
+                is NotesSyncRepository.SyncOutcome.Success -> SyncStatus(
                     syncing = false,
                     lastSyncAgoMs = System.currentTimeMillis(),
                     error = null
                 )
-            } else {
-                SyncStatus(
+                is NotesSyncRepository.SyncOutcome.Unauthorized -> SyncStatus(
                     syncing = false,
                     lastSyncAgoMs = _syncStatus.value.lastSyncAgoMs,
-                    error = "Sync failed (offline or not signed in)"
+                    error = "Session expired. Please sign in again."
+                )
+                is NotesSyncRepository.SyncOutcome.Failed -> SyncStatus(
+                    syncing = false,
+                    lastSyncAgoMs = _syncStatus.value.lastSyncAgoMs,
+                    error = "Sync failed: ${outcome.reason ?: "network error"}"
+                )
+                NotesSyncRepository.SyncOutcome.Skipped -> SyncStatus(
+                    syncing = false,
+                    lastSyncAgoMs = _syncStatus.value.lastSyncAgoMs,
+                    error = "Sync skipped (offline or not signed in)"
                 )
             }
         }
@@ -260,6 +264,15 @@ class NotesListViewModel(
      * Factory that builds the view model from an [Application] — we need
      * the application context to construct the [NotesSyncRepository] (for
      * the ConnectivityManager and SharedPreferences).
+     *
+     * B3 — uses the [NotesApplication.syncRepository] singleton. The
+     * previous implementation constructed a fresh
+     * [NotesSyncRepository] on every ViewModel create, which meant
+     * the BackgroundSyncWorker (which also uses the singleton) and
+     * the ViewModel had two independent mutexes and two independent
+     * SyncStore caches. That allowed a push from the worker to
+     * interleave with a push from the editor on the same cursor and
+     * corrupt the per-user namespace introduced in B6.
      */
     class Factory(
         private val repository: NoteRepository,
@@ -269,11 +282,7 @@ class NotesListViewModel(
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
             if (modelClass.isAssignableFrom(NotesListViewModel::class.java)) {
                 val app = application as NotesApplication
-                val syncRepo = NotesSyncRepository(
-                    noteDao = app.database.noteDao(),
-                    context = application
-                )
-                return NotesListViewModel(repository, syncRepo) as T
+                return NotesListViewModel(repository, app.syncRepository) as T
             }
             throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
         }

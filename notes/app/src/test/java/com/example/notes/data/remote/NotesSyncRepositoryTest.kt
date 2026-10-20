@@ -9,7 +9,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -73,7 +72,10 @@ class NotesSyncRepositoryTest {
     @After
     fun tearDown() {
         AuthStore.clearAll(context)
-        SyncStore.setLastCursor(context, 0L)
+        // B6 — cursor is namespaced per user. Wipe the slot for the
+        // user the test signed in as; other test users (if any) are
+        // untouched so the key namespace doesn't leak between cases.
+        SyncStore.setLastCursor(context, userId = 3, cursor = 0L)
         ApiClient.authToken = originalToken
         ApiClient.BASE_URL = originalBaseUrl
     }
@@ -112,59 +114,12 @@ class NotesSyncRepositoryTest {
     }
 
     @Test
-    fun `findByContentAndUser with local serverId null backfills the server UUID`() {
-        // Local note: never pushed (serverId is null). Server has the
-        // same content under a different UUID. The merge must NOT
-        // create a duplicate — it must stamp the server UUID on the
-        // local row.
-        dao.insert(
-            NoteEntity(
-                id = 7, title = "hello", content = "world",
-                userId = 3, serverId = null
-            )
-        )
-
-        val byContent = dao.findByContentAndUserOrNull("hello", "world", 3)
-        assertEquals(7L, byContent?.id)
-        assertNull(byContent?.serverId)
-
-        // Simulate the merge: backfill serverId.
-        dao.update(byContent!!.copy(serverId = "server-uuid-2"))
-
-        val after = dao.getRowById(7)!!
-        assertEquals("server-uuid-2", after.serverId)
-    }
-
-    @Test
-    fun `findByContentAndUser with local serverId non-null does NOT overwrite`() {
-        // Local note already linked to its own server UUID. Server
-        // returned an unrelated server copy with the same content
-        // (this happens when an earlier push failed mid-response and
-        // left an orphan on the server). The merge must leave the
-        // local serverId alone — overwriting it would ping-pong
-        // between the two server copies.
-        dao.insert(
-            NoteEntity(
-                id = 11, title = "ping", content = "pong",
-                userId = 3, serverId = "local-uuid"
-            )
-        )
-
-        val byContent = dao.findByContentAndUserOrNull("ping", "pong", 3)
-        assertEquals(11L, byContent?.id)
-        assertEquals("local-uuid", byContent?.serverId)
-
-        // Simulate the merge's "else" branch: skip, do not update.
-        // (We don't call dao.update here at all.)
-        val after = dao.getRowById(11)!!
-        assertEquals("local-uuid", after.serverId)
-        assertEquals(1, dao.allRows().size)
-    }
-
-    @Test
     fun `getDirtyNotes returns rows where dirtyRevision is greater than lastSyncedRevision`() {
         // BUG 1 regression: previously this was "WHERE serverId IS NULL".
         // Now any local mutation, on any row, marks it dirty.
+        // B1 — the previous `(deletedAt IS NULL OR serverChangeId = 0)`
+        // filter is gone, so tombstones with a synced change_id are
+        // also returned.
         dao.insert(
             NoteEntity(id = 1, title = "pushed", content = "x",
                 userId = 3, serverId = "server-1",
@@ -180,11 +135,20 @@ class NotesSyncRepositoryTest {
                 userId = 3, serverId = "server-2",
                 dirtyRevision = 2, lastSyncedRevision = 1)
         )
+        // B1 — a tombstone (deletedAt != null) with an already-synced
+        // change_id used to be excluded by the BUG 1 filter. The fix
+        // includes it so the push pass can issue the server-side DELETE.
+        dao.insert(
+            NoteEntity(id = 4, title = "tombstone", content = "",
+                userId = 3, serverId = "server-3",
+                dirtyRevision = 2, lastSyncedRevision = 1,
+                deletedAt = 1_700_000_000_000L, serverChangeId = 99)
+        )
 
         val pending = dao.pendingForUser(3)
-        assertEquals(2, pending.size)
+        assertEquals(3, pending.size)
         val ids = pending.map { it.id }.toSet()
-        assertEquals(setOf(2L, 3L), ids)
+        assertEquals(setOf(2L, 3L, 4L), ids)
     }
 
     @Test
@@ -248,15 +212,6 @@ class NotesSyncRepositoryTest {
         fun getNoteByServerIdOrNull(serverId: String): NoteEntity? =
             rows.firstOrNull { it.serverId == serverId }
 
-        fun findByContentAndUserOrNull(
-            title: String,
-            content: String,
-            userId: Int
-        ): NoteEntity? =
-            rows.firstOrNull {
-                it.title == title && it.content == content && it.userId == userId
-            }
-
         fun pendingForUser(userId: Int): List<NoteEntity> =
             rows.filter { it.dirtyRevision > it.lastSyncedRevision && it.userId == userId }
 
@@ -280,7 +235,6 @@ class NotesSyncRepositoryTest {
                 )
             }
         }
-        override suspend fun deleteNote(note: NoteEntity) { rows.removeAll { it.id == note.id } }
         override suspend fun deleteNoteById(id: Long) { rows.removeAll { it.id == id } }
         override suspend fun purgeNoteById(id: Long) { rows.removeAll { it.id == id } }
 
@@ -305,28 +259,34 @@ class NotesSyncRepositoryTest {
 
         override suspend fun getNoteByServerId(serverId: String): NoteEntity? =
             getNoteByServerIdOrNull(serverId)
-        override suspend fun findByContentAndUser(
-            title: String,
-            content: String,
-            userId: Int
-        ): NoteEntity? = findByContentAndUserOrNull(title, content, userId)
 
-        override suspend fun getNotesWithServerId(): List<NoteEntity> =
-            rows.filter { !it.serverId.isNullOrEmpty() }
+        // B1 — fixed filter (the BUG 1 condition is gone). Tombstones
+        // with a serverChangeId are now picked up by the push pass.
         override suspend fun getDirtyNotes(userId: Int): List<NoteEntity> =
             rows.filter {
                 it.userId == userId &&
-                it.dirtyRevision > it.lastSyncedRevision &&
-                (it.deletedAt == null || it.serverChangeId == 0L)
+                it.dirtyRevision > it.lastSyncedRevision
             }
-        override suspend fun getDirtyNotesBounded(userId: Int, limit: Int): List<NoteEntity> =
-            getDirtyNotes(userId).take(limit)
+        // B1 — dedicated query for the "tombstone already
+        // acknowledged" cleanup. Mirrors the production SQL.
+        override suspend fun getTombstonesAcknowledged(userId: Int): List<NoteEntity> =
+            rows.filter {
+                it.userId == userId &&
+                it.deletedAt != null &&
+                it.serverChangeId > 0L
+            }
+        override suspend fun getAllNotesSnapshot(userId: Int): List<NoteEntity> =
+            rows.filter { it.userId == userId && it.deletedAt == null }
+        override suspend fun getAllLiveNotesSync(): List<NoteEntity> =
+            rows.filter { it.deletedAt == null }
         override suspend fun countDirtyNotes(userId: Int): Int = getDirtyNotes(userId).size
         override suspend fun markSynced(
             localId: Long,
             syncedRev: Int,
             serverChangeId: Long,
-            serverUpdatedAt: Long
+            serverUpdatedAt: Long,
+            baseTitle: String,
+            baseContent: String
         ) {
             val idx = rows.indexOfFirst { it.id == localId }
             if (idx >= 0) {
@@ -341,19 +301,14 @@ class NotesSyncRepositoryTest {
                 )
             }
         }
-        override suspend fun bumpDirty(id: Long, now: Long) {
-            val idx = rows.indexOfFirst { it.id == id }
-            if (idx >= 0) {
-                rows[idx] = rows[idx].copy(
-                    dirtyRevision = rows[idx].dirtyRevision + 1,
-                    updatedAt = now
-                )
-            }
-        }
         override suspend fun migrateAnonymousNotesToUser(userId: Int): Int {
             val targets = rows.filter { it.userId == 0 }
             targets.forEach { update(it.copy(userId = userId)) }
             return targets.size
+        }
+        override suspend fun updateContentOnly(localId: Long, newContent: String) {
+            val idx = rows.indexOfFirst { it.id == localId }
+            if (idx >= 0) rows[idx] = rows[idx].copy(content = newContent)
         }
     }
 }

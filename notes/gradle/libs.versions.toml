@@ -1,17 +1,17 @@
 [versions]
 agp = "9.4.1"
-coreKtx = "1.10.1"
+coreKtx = "1.15.0"
 junit = "4.13.2"
 junitVersion = "1.1.5"
 espressoCore = "3.5.1"
-lifecycleRuntimeKtx = "2.6.2"
-activityCompose = "1.8.0"
+lifecycleRuntimeKtx = "2.9.0"
+activityCompose = "1.10.0"
 kotlin = "2.2.10"
 composeBom = "2026.02.01"
 ksp = "2.2.10-2.0.2"
 room = "2.7.0"
-navigationCompose = "2.7.7"
-lifecycleViewmodelCompose = "2.6.2"
+navigationCompose = "2.8.0"
+lifecycleViewmodelCompose = "2.9.0"
 kotlinxSerialization = "1.7.3"
 # V4.2 — Google Sign-In for "Continue with Google"
 playServicesAuth = "21.4.0"
@@ -28,6 +28,15 @@ robolectric = "4.15"
 coroutinesTest = "1.8.1"
 mockwebserver = "4.12.0"
 androidxTestCore = "1.5.0"
+# C1 — EncryptedSharedPreferences for token storage (Android 6.0+ on-device
+# keystore; 1.1.0-alpha06 is the current stable line that targets Java 11+).
+androidxSecurityCrypto = "1.1.0-alpha06"
+# C3 — Credential Manager (replaces the deprecated `BeginSignInRequest` /
+# `Identity.getSignInClient` flow). 1.5.0 is the current stable line.
+credentials = "1.5.0"
+# Google Identity Services for the "Sign in with Google" credential type.
+# 1.1.1 is the current stable line and is API-stable.
+googleid = "1.1.1"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -59,6 +68,15 @@ androidx-work-runtime-ktx = { group = "androidx.work", name = "work-runtime-ktx"
 robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
 androidx-test-core = { group = "androidx.test", name = "core-ktx", version.ref = "androidxTestCore" }
 kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutinesTest" }
+# C1 — encrypted SharedPreferences wrapper backed by the Android Keystore.
+androidx-security-crypto = { group = "androidx.security", name = "security-crypto", version.ref = "androidxSecurityCrypto" }
+# C3 — Credential Manager (Android 14+ has built-in bottom-sheet; older
+# versions fall back to the system credential picker via Play Services).
+androidx-credentials = { group = "androidx.credentials", name = "credentials", version.ref = "credentials" }
+androidx-credentials-play-services = { group = "androidx.credentials", name = "credentials-play-services-auth", version.ref = "credentials" }
+# Google Identity Services — used together with Credential Manager to
+# produce a Google ID token from a `GetSignInWithGoogleOption` request.
+googleid-lib = { group = "com.google.android.libraries.identity.googleid", name = "googleid", version.ref = "googleid" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

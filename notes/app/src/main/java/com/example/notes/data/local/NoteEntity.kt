@@ -43,7 +43,14 @@ import kotlinx.serialization.Serializable
 @Entity(
     tableName = "notes",
     indices = [
-        Index("serverId"),
+        // B3 — serverId is the canonical identifier for a synced note.
+        // It is now assigned locally as a UUID at insert time (see
+        // [com.example.notes.data.repository.NoteRepository.insertNote])
+        // and the value the server echoes back is the same one we sent
+        // (no client→server reassignment), so a UNIQUE index is safe and
+        // protects against accidental duplicates during the migration
+        // window.
+        Index(value = ["serverId"], unique = true),
         Index("userId"),
         Index("deletedAt"),
         Index(value = ["userId", "dirtyRevision"])

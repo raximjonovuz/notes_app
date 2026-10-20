@@ -1,0 +1,197 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 11,
+    "identityHash": "b81117b714d2df980012e825c392d287",
+    "entities": [
+      {
+        "tableName": "notes",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `title` TEXT NOT NULL, `content` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, `isFavorite` INTEGER NOT NULL, `isTrashed` INTEGER NOT NULL, `backgroundColor` INTEGER NOT NULL, `fontWeight` INTEGER NOT NULL, `textSize` INTEGER NOT NULL, `imageUris` TEXT NOT NULL, `serverId` TEXT, `userId` INTEGER NOT NULL, `isPinned` INTEGER NOT NULL, `deletedAt` INTEGER, `dirtyRevision` INTEGER NOT NULL, `lastSyncedRevision` INTEGER NOT NULL, `serverChangeId` INTEGER NOT NULL, `serverUpdatedAt` INTEGER NOT NULL, `isConflict` INTEGER NOT NULL, `conflictOriginalId` TEXT, `baseTitle` TEXT, `baseContent` TEXT)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "title",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "content",
+            "columnName": "content",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "createdAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isFavorite",
+            "columnName": "isFavorite",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isTrashed",
+            "columnName": "isTrashed",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "backgroundColor",
+            "columnName": "backgroundColor",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fontWeight",
+            "columnName": "fontWeight",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "textSize",
+            "columnName": "textSize",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "imageUris",
+            "columnName": "imageUris",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "serverId",
+            "columnName": "serverId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "userId",
+            "columnName": "userId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isPinned",
+            "columnName": "isPinned",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "deletedAt",
+            "columnName": "deletedAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "dirtyRevision",
+            "columnName": "dirtyRevision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastSyncedRevision",
+            "columnName": "lastSyncedRevision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "serverChangeId",
+            "columnName": "serverChangeId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "serverUpdatedAt",
+            "columnName": "serverUpdatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isConflict",
+            "columnName": "isConflict",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "conflictOriginalId",
+            "columnName": "conflictOriginalId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "baseTitle",
+            "columnName": "baseTitle",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "baseContent",
+            "columnName": "baseContent",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_notes_serverId",
+            "unique": true,
+            "columnNames": [
+              "serverId"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_notes_serverId` ON `${TABLE_NAME}` (`serverId`)"
+          },
+          {
+            "name": "index_notes_userId",
+            "unique": false,
+            "columnNames": [
+              "userId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_notes_userId` ON `${TABLE_NAME}` (`userId`)"
+          },
+          {
+            "name": "index_notes_deletedAt",
+            "unique": false,
+            "columnNames": [
+              "deletedAt"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_notes_deletedAt` ON `${TABLE_NAME}` (`deletedAt`)"
+          },
+          {
+            "name": "index_notes_userId_dirtyRevision",
+            "unique": false,
+            "columnNames": [
+              "userId",
+              "dirtyRevision"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_notes_userId_dirtyRevision` ON `${TABLE_NAME}` (`userId`, `dirtyRevision`)"
+          }
+        ]
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'b81117b714d2df980012e825c392d287')"
+    ]
+  }
+}

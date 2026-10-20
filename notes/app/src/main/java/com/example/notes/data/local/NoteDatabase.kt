@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [NoteEntity::class], version = 10, exportSchema = false)
+@Database(entities = [NoteEntity::class], version = 11, exportSchema = true)
 abstract class NoteDatabase : RoomDatabase() {
 
     abstract fun noteDao(): NoteDao
@@ -91,6 +91,79 @@ abstract class NoteDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * B3 — `serverId` becomes a local UUID stamped at insert time,
+         * with a UNIQUE index to prevent the duplicate-row class of
+         * bugs the previous nullable `serverId` allowed.
+         *
+         * The migration has to handle three pre-existing edge cases
+         * before the unique index can be created:
+         *
+         *   1. `serverId IS NULL` rows (notes that have never been
+         *      pushed). Generate a fresh UUID for each.
+         *
+         *   2. Duplicate `serverId` values (the legacy push path could
+         *      accidentally assign the same UUID to two local rows when
+         *      a previous response was lost and a retry used a freshly
+         *      generated id). Keep the oldest row (smallest primary
+         *      key) untouched, give every other row a fresh UUID.
+         *
+         *   3. The old non-unique `index_notes_serverId` index from
+         *      MIGRATION_9_10 must be dropped so the new unique index
+         *      with the same column can be created.
+         *
+         * No `fallbackToDestructiveMigration` is used: existing data
+         * must survive this migration.
+         */
+        private val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Pass 1 — dedupe existing serverId values. Walk the
+                // table in primary-key order so the first row for each
+                // duplicate serverId is the "keeper" and the rest get
+                // fresh UUIDs. NULLs are handled in pass 2.
+                db.query("SELECT id, serverId FROM notes ORDER BY id ASC").use { cursor ->
+                    val seen = HashSet<String>()
+                    val dupUpdates = ArrayList<Pair<Long, String>>()
+                    while (cursor.moveToNext()) {
+                        val id = cursor.getLong(0)
+                        if (cursor.isNull(1)) continue
+                        val serverId = cursor.getString(1)
+                        if (serverId.isNullOrEmpty()) continue
+                        if (!seen.add(serverId)) {
+                            dupUpdates.add(id to java.util.UUID.randomUUID().toString())
+                        }
+                    }
+                    for ((id, newServerId) in dupUpdates) {
+                        db.execSQL(
+                            "UPDATE notes SET serverId = ? WHERE id = ?",
+                            arrayOf<Any>(newServerId, id)
+                        )
+                    }
+                }
+
+                // Pass 2 — fill NULL serverIds. After pass 1, every
+                // remaining non-NULL value is unique.
+                db.query("SELECT id FROM notes WHERE serverId IS NULL OR serverId = ''").use { cursor ->
+                    val nullIds = ArrayList<Long>()
+                    while (cursor.moveToNext()) {
+                        nullIds.add(cursor.getLong(0))
+                    }
+                    for (id in nullIds) {
+                        db.execSQL(
+                            "UPDATE notes SET serverId = ? WHERE id = ?",
+                            arrayOf<Any>(java.util.UUID.randomUUID().toString(), id)
+                        )
+                    }
+                }
+
+                // Pass 3 — drop the non-unique index from MIGRATION_9_10
+                // and create the new unique one. Index name matches
+                // Room's auto-generated name for `@Index(value=["serverId"], unique=true)`.
+                db.execSQL("DROP INDEX IF EXISTS index_notes_serverId")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_notes_serverId_unique ON notes(serverId)")
+            }
+        }
+
         fun getDatabase(context: Context): NoteDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -107,7 +180,8 @@ abstract class NoteDatabase : RoomDatabase() {
                         MIGRATION_6_7,
                         MIGRATION_7_8,
                         MIGRATION_8_9,
-                        MIGRATION_9_10
+                        MIGRATION_9_10,
+                        MIGRATION_10_11
                     )
                     .build()
                 INSTANCE = instance

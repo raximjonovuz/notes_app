@@ -160,6 +160,7 @@ fun NotesListScreen(
     val noteCount by viewModel.noteCount.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val syncStatus by viewModel.syncStatus.collectAsStateWithLifecycle()
+    val sort by viewModel.sort.collectAsStateWithLifecycle()
 
     // V4.3.1: when the screen is first composed, re-read the active
     // user from AuthStore and re-emit userIdFlow. This guarantees
@@ -414,7 +415,7 @@ fun NotesListScreen(
                                     text = {
                                         Text(
                                             "Sort: ${
-                                                when (viewModel.sort.value) {
+                                                when (sort) {
                                                     NotesSort.UPDATED_DESC -> "Updated (newest)"
                                                     NotesSort.CREATED_DESC -> "Created (newest)"
                                                     NotesSort.TITLE_ASC -> "Title (A→Z)"
@@ -450,7 +451,7 @@ fun NotesListScreen(
                                             )
                                         },
                                         leadingIcon = {
-                                            if (viewModel.sort.value == option) {
+                                            if (sort == option) {
                                                 Icon(
                                                     Icons.Filled.Check,
                                                     contentDescription = null

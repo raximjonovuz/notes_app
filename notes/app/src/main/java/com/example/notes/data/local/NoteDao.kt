@@ -93,28 +93,44 @@ interface NoteDao {
     @Query("SELECT * FROM notes WHERE serverId = :serverId LIMIT 1")
     suspend fun getNoteByServerId(serverId: String): NoteEntity?
 
-    /** V5.3 — content+title backfill lookup, used by legacy path. */
-    @Query("SELECT * FROM notes WHERE title = :title AND content = :content AND userId = :userId LIMIT 1")
-    suspend fun findByContentAndUser(title: String, content: String, userId: Int): NoteEntity?
-
     /**
-     * V5.3 — push drain. Returns every row that has local changes the
+     * B1 — push drain. Returns every row that has local changes the
      * server hasn't acknowledged yet, regardless of whether it was ever
      * synced. BUG 1 fix: previously this was `serverId IS NULL` which
      * silently skipped trash/pin/color flips on already-synced notes.
      *
      * - dirtyRevision > 0 means "the local state has diverged from
      *   lastSyncedRevision". Every mutation in NoteRepository bumps it.
-     * - We exclude tombstones whose serverChangeId already reflects the
-     *   soft-delete (cleaned up below by [purgeSoftDeleted]).
+     * - B1: tombstones (`deletedAt != null`) are now INCLUDED here so
+     *   the push pass can issue the server-side DELETE. The previous
+     *   `(deletedAt IS NULL OR serverChangeId = 0)` filter
+     *   accidentally hid synced tombstones from the push queue, so
+     *   deletes never reached the server and the local row lived
+     *   forever.
      */
     @Query(
         "SELECT * FROM notes WHERE userId = :userId " +
         "AND dirtyRevision > lastSyncedRevision " +
-        "AND (deletedAt IS NULL OR serverChangeId = 0) " +
         "ORDER BY updatedAt DESC"
     )
     suspend fun getDirtyNotes(userId: Int): List<NoteEntity>
+
+    /**
+     * B1 — separate query for the "tombstone already acknowledged by
+     * the server" cleanup. A row is in this set when it is locally
+     * soft-deleted (`deletedAt != null`) AND the server has issued a
+     * `change_log` entry for it (`serverChangeId > 0`). Once both
+     * hold, the row can be purged without risk of resurrection.
+     *
+     * Replaces the old `purgeAcknowledgedDeletes` path that piggy-backed
+     * on `getDirtyNotes` and (because of the B1 bug) returned zero rows
+     * for already-synced tombstones.
+     */
+    @Query(
+        "SELECT * FROM notes WHERE userId = :userId " +
+        "AND deletedAt IS NOT NULL AND serverChangeId > 0"
+    )
+    suspend fun getTombstonesAcknowledged(userId: Int): List<NoteEntity>
 
     /**
      * V5.3 — rows whose soft-delete has been confirmed by the server
@@ -136,30 +152,43 @@ interface NoteDao {
      *
      * `syncedRev` must be the dirtyRevision value that was on the row
      * when the push started — captured by the caller.
+     *
+     * B4 — `baseTitle` and `baseContent` are taken from the parameters
+     * (the snapshot we just sent to the server), NOT from the current
+     * row's `title`/`content`. If the user typed a new character while
+     * the push was in flight, the current row's content has already
+     * moved on; using the current values here would corrupt the 3-way
+     * merge baseline and the next pull would see a "phantom" local
+     * edit that never actually reached the server.
      */
     @Query(
         "UPDATE notes SET lastSyncedRevision = :syncedRev, dirtyRevision = :syncedRev, " +
         "serverChangeId = :serverChangeId, serverUpdatedAt = :serverUpdatedAt, " +
-        "baseTitle = title, baseContent = content WHERE id = :localId"
+        "baseTitle = :baseTitle, baseContent = :baseContent WHERE id = :localId"
     )
     suspend fun markSynced(
         localId: Long,
         syncedRev: Int,
         serverChangeId: Long,
-        serverUpdatedAt: Long
+        serverUpdatedAt: Long,
+        baseTitle: String,
+        baseContent: String
     )
 
-    /** V5.3 — fix-up: bump dirtyRevision on a row (used by toEntity → insert). */
-    @Query("UPDATE notes SET dirtyRevision = dirtyRevision + 1, updatedAt = :now WHERE id = :id")
-    suspend fun bumpDirty(id: Long, now: Long)
+    /**
+     * F-28 migration helper — write a new [content] value for a note
+     * **without** touching `dirtyRevision`, `lastSyncedRevision`,
+     * `baseTitle` / `baseContent`, or any sync-state column. The editor
+     * doesn't go through this — only the one-time local-image path
+     * migration does, so the change can't accidentally clear a pending
+     * push queue and look like data loss.
+     */
+    @Query("UPDATE notes SET content = :newContent WHERE id = :localId")
+    suspend fun updateContentOnly(localId: Long, newContent: String)
 
     /** V5.3 — used by BackgroundSyncWorker once a day to push pending deltas. */
     @Query("SELECT COUNT(*) FROM notes WHERE userId = :userId AND dirtyRevision > lastSyncedRevision")
     suspend fun countDirtyNotes(userId: Int): Int
-
-    /** V5.3 — used by the cold-start flush (BUG 8). */
-    @Query("SELECT * FROM notes WHERE userId = :userId AND dirtyRevision > lastSyncedRevision LIMIT :limit")
-    suspend fun getDirtyNotesBounded(userId: Int, limit: Int): List<NoteEntity>
 
     /**
      * V5.3 — backup export snapshot. Returns a one-shot [List] (not a
@@ -171,4 +200,19 @@ interface NoteDao {
         "ORDER BY isPinned DESC, updatedAt DESC"
     )
     suspend fun getAllNotesSnapshot(userId: Int): List<NoteEntity>
+
+    /**
+     * D3 — every live note across all users. Used by the
+     * [com.example.notes.util.LocalImageCleanup] pass to figure out
+     * which `img_*` files in `filesDir` are still pinned by some
+     * note's `content` and which are orphans that can be deleted.
+     *
+     * Cross-user because orphan cleanup is a device-level concern:
+     * even if a user signs out, their local `file://` images remain
+     * in `filesDir` and need to be reclaimable.
+     */
+    @Query(
+        "SELECT * FROM notes WHERE deletedAt IS NULL"
+    )
+    suspend fun getAllLiveNotesSync(): List<NoteEntity>
 }

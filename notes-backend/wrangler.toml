@@ -1,6 +1,6 @@
 name = "notes-backend"
 main = "src/index.ts"
-compatibility_date = "2024-12-01"
+compatibility_date = "2025-01-01"
 
 [[d1_databases]]
 binding = "DB"
@@ -13,3 +13,25 @@ bucket_name = "notes-images"
 
 [vars]
 ENV = "production"
+# ALLOW_PASSWORD_AUTH is no longer in [vars] — it was left as "true" for a
+# debug curl-test pass and was never removed. The current production
+# password-auth gate is now driven by the same-named secret; run
+# `npx wrangler secret put ALLOW_PASSWORD_AUTH` with the value `false` to
+# keep /auth/register and /auth/login hidden (404). With no secret set the
+# env binding is `undefined`, which passwordAuthDisabled() already treats
+# as "disabled" — so the safe default holds even before the secret is in
+# place.
+
+# A6: daily retention cron. Runs at 03:00 UTC every day; triggers
+# `scheduled(event, env, ctx)` in src/index.ts, which calls runRetention
+# to hard-delete change_log and soft-deleted notes older than 90 days.
+[triggers]
+crons = ["0 3 * * *"]  # har kuni 03:00 UTC
+
+# Upstash Redis (REST) — query-level cache.
+# Set the secrets with:
+#   wrangler secret put UPSTASH_REDIS_REST_URL
+#   wrangler secret put UPSTASH_REDIS_REST_TOKEN
+# If either is missing, the cache layer becomes a no-op (D1 only).
+# UPSTASH_REDIS_REST_URL = "https://<name>.upstash.io"
+# UPSTASH_REDIS_REST_TOKEN = "<token>"

@@ -73,6 +73,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
@@ -186,6 +187,9 @@ fun NoteEditScreen(
     val saveStatus by viewModel.saveStatus.collectAsStateWithLifecycle()
     val canUndo by viewModel.canUndo.collectAsStateWithLifecycle()
     val canRedo by viewModel.canRedo.collectAsStateWithLifecycle()
+    // F-05 — the set of image blocks whose upload gave up. Drives
+    // the "Rasm yuklanmadi" badge + the retry action.
+    val failedImageUris by viewModel.failedImageUris.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
     val firstBlockFocusRequester = remember { FocusRequester() }
@@ -621,6 +625,8 @@ onClick = {
                     },
                     onRemoveImage = { blockId -> viewModel.removeImageBlock(blockId) },
                     onTapImage = { uri -> fullScreenImageUri = uri },
+                    failedImageUris = failedImageUris,
+                    onRetryImageUpload = { uri -> viewModel.retryImageUpload(uri) },
                     autoFocusFirstBlock = true,
                     autoFocusRequester = firstBlockFocusRequester
                 )
@@ -991,6 +997,10 @@ private fun BlocksEditor(
     onToggleChecklistLine: (blockId: String, lineIndex: Int) -> Unit,
     onRemoveImage: (blockId: String) -> Unit,
     onTapImage: (uri: String) -> Unit,
+    // F-05 — which image blocks failed to upload (their local URI is
+    // in the set) and the retry action for them.
+    failedImageUris: Set<String> = emptySet(),
+    onRetryImageUpload: (uri: String) -> Unit = {},
     autoFocusFirstBlock: Boolean = false,
     autoFocusRequester: FocusRequester? = null
 ) {
@@ -1047,7 +1057,11 @@ private fun BlocksEditor(
                     InlineImage(
                         uriString = block.uri,
                         onTap = { onTapImage(block.uri) },
-                        onRemove = { onRemoveImage(block.id) }
+                        onRemove = { onRemoveImage(block.id) },
+                        // F-05 — the badge + retry action are only
+                        // shown for images whose upload gave up.
+                        uploadFailed = block.uri in failedImageUris,
+                        onRetryUpload = { onRetryImageUpload(block.uri) }
                     )
                 }
             }
@@ -1490,61 +1504,107 @@ private fun parseChecklistLine(line: String): ChecklistLine {
 private fun InlineImage(
     uriString: String,
     onTap: () -> Unit,
-    onRemove: () -> Unit
+    onRemove: () -> Unit,
+    // F-05 — the image's upload gave up (the background push pass
+    // burned its retry budget). We show a warning strip with a
+    // "retry" action so the user knows the image never reached the
+    // server and can try again.
+    uploadFailed: Boolean = false,
+    onRetryUpload: () -> Unit = {}
 ) {
     // V5.2.3 — moved off the UI thread. The previous synchronous
     // `remember { loadImageBitmapFromUri(...) }` blocked the main thread
     // on a slow `https://…` fetch and surfaced as "the image
     // disappeared" the moment the public URL was wired in.
     val bitmap: ImageBitmap? = com.example.notes.ui.util.rememberLoadedImage(uriString)
-    Box(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .clickable(onClick = onTap)
     ) {
-        if (bitmap != null) {
-            Image(
-                bitmap = bitmap,
-                contentDescription = "Note image",
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .clickable(onClick = onTap)
+        ) {
+            if (bitmap != null) {
+                Image(
+                    bitmap = bitmap,
+                    contentDescription = "Note image",
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(220.dp),
+                    contentScale = ContentScale.Fit
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(120.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Image,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(48.dp)
+                    )
+                }
+            }
+
+            IconButton(
+                onClick = onRemove,
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .height(220.dp),
-                contentScale = ContentScale.Fit
-            )
-        } else {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(120.dp),
-                contentAlignment = Alignment.Center
+                    .align(Alignment.TopEnd)
+                    .padding(6.dp)
+                    .size(28.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.45f))
             ) {
                 Icon(
-                    imageVector = Icons.Filled.Image,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(48.dp)
+                    imageVector = Icons.Filled.Close,
+                    contentDescription = "Remove image",
+                    tint = Color.White,
+                    modifier = Modifier.size(16.dp)
                 )
             }
         }
 
-        IconButton(
-            onClick = onRemove,
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(6.dp)
-                .size(28.dp)
-                .clip(CircleShape)
-                .background(Color.Black.copy(alpha = 0.45f))
-        ) {
-            Icon(
-                imageVector = Icons.Filled.Close,
-                contentDescription = "Remove image",
-                tint = Color.White,
-                modifier = Modifier.size(16.dp)
-            )
+        // F-05 — the "never uploaded" notice + retry action. Only
+        // rendered for images whose upload actually failed, so a
+        // healthy note is completely unaffected.
+        if (uploadFailed) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.errorContainer)
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Warning,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onErrorContainer,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.size(8.dp))
+                Text(
+                    text = "Rasm yuklanmadi, qayta urinib ko'ring",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(onClick = onRetryUpload) {
+                    Text(
+                        "Qayta urinish",
+                        color = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                }
+            }
         }
     }
 }

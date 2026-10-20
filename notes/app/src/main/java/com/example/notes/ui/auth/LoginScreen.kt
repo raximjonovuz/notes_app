@@ -1,8 +1,7 @@
 package com.example.notes.ui.auth
 
+import android.app.Activity
 import android.app.Application
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -44,6 +43,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -53,28 +53,42 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.credentials.CredentialManager
+import androidx.credentials.GetCredentialRequest
+import androidx.credentials.exceptions.GetCredentialCancellationException
+import androidx.credentials.exceptions.GetCredentialException
+import androidx.credentials.exceptions.NoCredentialException
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.notes.data.local.AuthStore
 import com.example.notes.ui.theme.notesHeaderBackground
 import com.example.notes.util.Logger
-import com.google.android.gms.auth.api.identity.BeginSignInRequest
-import com.google.android.gms.auth.api.identity.Identity
-import com.google.android.gms.common.api.ApiException
+import com.google.android.libraries.identity.googleid.GetGoogleIdOption
+import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
+import com.google.android.libraries.identity.googleid.GoogleIdTokenParsingException
+import kotlinx.coroutines.launch
+import java.security.MessageDigest
+import java.util.UUID
 
 /**
- * V4.2 — Google-only sign-in screen. The user has explicitly removed the
- * email/password flow; the only way into the app is "Continue with Google".
+ * C3 — Google Sign-In rewritten on top of **Credential Manager** +
+ * **Google Identity Services**. The previous implementation used
+ * `BeginSignInRequest` / `Identity.getSignInClient`, which Google
+ * deprecated in 2023 and which can silently fail on emulators that
+ * don't ship the One-Tap UI. Credential Manager is the system
+ * credential picker (Android 14+ has a built-in bottom-sheet; older
+ * versions fall back to the Play Services shim).
  *
- * Layout:
- *   - Brand header
- *   - If saved accounts exist: list of those (tap to switch)
- *   - "Continue with Google" button (primary action)
- *
- * @param isEntryPoint when true the back button is hidden (we are the
- *        first screen) and auto-navigation happens on auth.
- * @param onAuthenticated called once after a successful auth round-trip.
- * @param onBack          up-navigation when the user taps the back arrow.
+ * Replay protection: a per-attempt **nonce** is generated on the
+ * client, hashed (SHA-256, base64url, no padding), and sent both to
+ * Google (as the `nonce` request param) and to the backend
+ * (out-of-band). The backend stores the raw nonce for 5 minutes
+ * (D1 `auth_nonces` table, see migration 0005) and rejects any
+ * Google ID token whose `nonce` claim doesn't match a still-valid
+ * entry. The hash on the wire and the raw form stored on the
+ * server don't reveal the nonce to an attacker that only sees the
+ * hash going to Google.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -88,59 +102,79 @@ fun LoginScreen(
         factory = AuthViewModel.factory(context.applicationContext as Application)
     )
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val scope = rememberCoroutineScope()
 
-    // V4.2 — Google Sign-In launcher. The screen owns the launcher
-    // because ActivityResult APIs are activity-scoped. The ID token
-    // is forwarded to the ViewModel, which handles the backend swap.
-    val googleSignInLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartIntentSenderForResult()
-    ) { result ->
-        Logger.d(
-            "LoginScreen",
-            "GoogleSignIn launcher result: code=${result.resultCode}, intent=${result.data}"
-        )
-        val credential = try {
-            Identity.getSignInClient(context)
-                .getSignInCredentialFromIntent(result.data)
-        } catch (e: ApiException) {
-            Logger.w("LoginScreen", "getSignInCredential failed", e)
-            viewModel.clearGoogleError()
-            return@rememberLauncherForActivityResult
-        }
-        val idToken = credential?.googleIdToken
-        Logger.d(
-            "LoginScreen",
-            "GoogleSignIn idToken=${idToken?.take(20)}..."
-        )
-        idToken?.let { viewModel.submitGoogle(it) } ?: viewModel.clearGoogleError()
-    }
+    /**
+     * V4.2 / C3 — Google Sign-In via Credential Manager. The screen
+     * owns the `Activity` reference because the new API demands a
+     * real Activity context (the framework bottom-sheet is anchored
+     * to it). If the user is not inside an Activity, the launcher
+     * bails out with a snackbar instead of crashing.
+     */
+    val credentialManager = remember(context) { CredentialManager.create(context) }
+    var inFlight by remember { mutableStateOf(false) }
 
-    fun launchGoogleSignIn() {
-        val client = Identity.getSignInClient(context)
-        val webClientId = "506282696730-jmrbedtsp0ce2onj5q5uo5hcg8k89lo6.apps.googleusercontent.com"
-        val request = BeginSignInRequest.builder()
-            .setGoogleIdTokenRequestOptions(
-                BeginSignInRequest.GoogleIdTokenRequestOptions.builder()
-                    .setSupported(true)
-                    .setServerClientId(webClientId)
-                    .setFilterByAuthorizedAccounts(false)
-                    .build()
+    suspend fun launchGoogleSignIn(activity: Activity) {
+        if (inFlight) return
+        inFlight = true
+        viewModel.beginGoogleAttempt()
+        try {
+            // 1. Generate a per-attempt nonce, hash it, and forward both
+            //    the raw value (to the backend) and the SHA-256 hash
+            //    (to Google as a `nonce` request param).
+            val rawNonce = UUID.randomUUID().toString()
+            val hashedNonce = sha256Base64Url(rawNonce)
+            viewModel.setPendingNonce(rawNonce)
+
+            val webClientId =
+                "506282696730-jmrbedtsp0ce2onj5q5uo5hcg8k89lo6.apps.googleusercontent.com"
+
+            val signInWithGoogle = GetSignInWithGoogleOption.Builder(webClientId)
+                // Server-side replay protection (see file header).
+                .setNonce(hashedNonce)
+                .build()
+            val googleIdOption = GetGoogleIdOption.Builder()
+                .setServerClientId(webClientId)
+                .setNonce(hashedNonce)
+                .setFilterByAuthorizedAccounts(false)
+                .build()
+
+            val request = GetCredentialRequest.Builder()
+                .addCredentialOption(signInWithGoogle)
+                .addCredentialOption(googleIdOption)
+                .build()
+
+            Logger.d("LoginScreen", "CredentialManager.getCredential starting")
+            val result = credentialManager.getCredential(
+                request = request,
+                context = activity
             )
-            .setAutoSelectEnabled(true)
-            .build()
-        Logger.d("LoginScreen", "beginSignIn starting with webClientId=$webClientId")
-        client.beginSignIn(request)
-            .addOnSuccessListener { result ->
-                Logger.d("LoginScreen", "beginSignIn succeeded, launching IntentSender")
-                val senderRequest = androidx.activity.result.IntentSenderRequest.Builder(
-                    result.pendingIntent.intentSender
-                ).build()
-                googleSignInLauncher.launch(senderRequest)
-            }
-            .addOnFailureListener { e ->
-                Logger.w("LoginScreen", "beginSignIn failed", e)
+            val credential = result.credential
+            val googleId = try {
+                GoogleIdTokenCredential.createFrom(credential.data)
+            } catch (e: GoogleIdTokenParsingException) {
+                Logger.w("LoginScreen", "GoogleIdToken parse failed", e)
                 viewModel.clearGoogleError()
+                return
             }
+            val idToken = googleId.idToken
+            // C4 — log only the *length* of the token, never the token
+            // itself (or any prefix).
+            Logger.d("LoginScreen", "GoogleSignIn idToken length=${idToken.length}")
+            viewModel.submitGoogle(idToken)
+        } catch (e: GetCredentialCancellationException) {
+            // User closed the bottom-sheet — treat as a no-op, not an error.
+            Logger.d("LoginScreen", "Credential picker cancelled by user")
+            viewModel.clearGoogleError()
+        } catch (e: NoCredentialException) {
+            Logger.w("LoginScreen", "No Google account on device", e)
+            viewModel.setGoogleError("No Google account found on this device.")
+        } catch (e: GetCredentialException) {
+            Logger.w("LoginScreen", "CredentialManager failed", e)
+            viewModel.setGoogleError("Google sign-in failed: ${e.message ?: e.javaClass.simpleName}")
+        } finally {
+            inFlight = false
+        }
     }
 
     // Entry-point mode: navigate automatically on auth (no manual back).
@@ -222,8 +256,15 @@ fun LoginScreen(
 
             // Single Google sign-in button. Always available.
             Button(
-                onClick = { launchGoogleSignIn() },
-                enabled = !state.isGoogleLoading,
+                onClick = {
+                    val activity = context as? Activity
+                    if (activity == null) {
+                        viewModel.setGoogleError("Sign-in requires a foreground screen.")
+                        return@Button
+                    }
+                    scope.launch { launchGoogleSignIn(activity) }
+                },
+                enabled = !state.isGoogleLoading && !inFlight,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(56.dp),
@@ -242,7 +283,6 @@ fun LoginScreen(
                     Spacer(Modifier.size(12.dp))
                     Text("Connecting…", fontSize = 16.sp)
                 } else {
-                    // Inline "G" mark (avoids an extra drawable dependency)
                     Box(
                         modifier = Modifier
                             .size(24.dp)
@@ -272,6 +312,19 @@ fun LoginScreen(
             }
         }
     }
+}
+
+/**
+ * SHA-256 hash of [input] encoded as URL-safe base64 (no padding).
+ * Matches what Google Identity Services expects for the `nonce`
+ * request param.
+ */
+private fun sha256Base64Url(input: String): String {
+    val digest = MessageDigest.getInstance("SHA-256").digest(input.toByteArray(Charsets.UTF_8))
+    return android.util.Base64.encodeToString(
+        digest,
+        android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING or android.util.Base64.NO_WRAP
+    )
 }
 
 @Composable

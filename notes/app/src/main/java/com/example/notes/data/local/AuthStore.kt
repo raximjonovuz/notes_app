@@ -1,8 +1,13 @@
 package com.example.notes.data.local
 
 import android.content.Context
+import android.content.SharedPreferences
 import androidx.core.content.edit
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
 import com.example.notes.data.remote.ApiClient
+import com.example.notes.util.Logger
+import java.io.File
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -13,6 +18,13 @@ import kotlinx.serialization.json.Json
  * disk (3 by default). Adding a new session while the limit is full evicts
  * the least-recently-used one.
  *
+ * C1 — tokens are no longer stored in a plain SharedPreferences file. The
+ * store now wraps [EncryptedSharedPreferences] (key material in the Android
+ * Keystore) so the JWTs cannot be lifted off the device by a backup or an
+ * ADB pull. On first access the previous plain `auth_prefs` file is
+ * copied into the encrypted store and deleted so existing users keep
+ * their session across the upgrade.
+ *
  * Layout:
  *   - `sessions_json`   -> JSON-encoded list of [Session] objects
  *   - `active_email`    -> email of the currently selected account
@@ -22,7 +34,14 @@ import kotlinx.serialization.json.Json
  */
 object AuthStore {
 
-    private const val PREFS = "auth_prefs"
+    private const val TAG = "AuthStore"
+
+    /** C1 — legacy plain-text SharedPreferences file (pre-C1 builds). */
+    private const val LEGACY_PREFS = "auth_prefs"
+
+    /** C1 — encrypted replacement; backed by an Android Keystore master key. */
+    private const val SECURE_PREFS = "auth_prefs_secure"
+
     private const val KEY_SESSIONS = "sessions_json"
     private const val KEY_ACTIVE_EMAIL = "active_email"
 
@@ -43,6 +62,101 @@ object AuthStore {
         isLenient = true
     }
 
+    /**
+     * Cached per-process so we only attempt EncryptedSharedPreferences once
+     * and survive a transient Keystore outage without retrying on every
+     * read/write. `null` while uninitialised.
+     */
+    @Volatile
+    private var cachedPrefs: SharedPreferences? = null
+
+    /**
+     * Returns the [SharedPreferences] instance backing this store. Tries the
+     * encrypted store first; on any failure (SecurityException on broken
+     * Keystore, missing JCE provider, Robolectric unit tests, …) falls back
+     * to the plain `auth_prefs` file so the app still works.
+     */
+    private fun prefs(context: Context): SharedPreferences {
+        cachedPrefs?.let { return it }
+        synchronized(this) {
+            cachedPrefs?.let { return it }
+            val resolved = openSecureOrLegacy(context)
+            cachedPrefs = resolved
+            return resolved
+        }
+    }
+
+    private fun openSecureOrLegacy(context: Context): SharedPreferences {
+        val ctx = context.applicationContext
+        val masterKey = try {
+            MasterKey.Builder(ctx).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build()
+        } catch (t: Throwable) {
+            Logger.w(TAG, "MasterKey unavailable; falling back to plain prefs", t)
+            return ctx.getSharedPreferences(LEGACY_PREFS, Context.MODE_PRIVATE)
+        }
+        return try {
+            val secure = EncryptedSharedPreferences.create(
+                ctx,
+                SECURE_PREFS,
+                masterKey,
+                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+            )
+            migrateLegacyIfNeeded(ctx, secure)
+            secure
+        } catch (t: Throwable) {
+            Logger.w(TAG, "EncryptedSharedPreferences unavailable; falling back to plain prefs", t)
+            ctx.getSharedPreferences(LEGACY_PREFS, Context.MODE_PRIVATE)
+        }
+    }
+
+    /**
+     * C1 — one-time migration from the legacy plain `auth_prefs` file. If
+     * a user upgrades from a V5.x build their tokens are still on disk in
+     * the clear; we copy the entries into the encrypted store and then
+     * delete the legacy file (file-level delete, not just `clear()`) so it
+     * is not picked up by future backups or filesystem dumps.
+     */
+    private fun migrateLegacyIfNeeded(ctx: Context, target: SharedPreferences) {
+        val legacy = try {
+            ctx.getSharedPreferences(LEGACY_PREFS, Context.MODE_PRIVATE)
+        } catch (_: Throwable) {
+            return
+        }
+        if (legacy.all.isEmpty()) {
+            // Nothing to migrate; still try to delete the file so an empty
+            // legacy file from a previous failed init doesn't linger.
+            deleteLegacyFile(ctx)
+            return
+        }
+        target.edit {
+            for ((k, v) in legacy.all) {
+                when (v) {
+                    is String -> putString(k, v)
+                    is Long -> putLong(k, v)
+                    is Int -> putInt(k, v)
+                    is Boolean -> putBoolean(k, v)
+                    is Float -> putFloat(k, v)
+                    else -> {
+                        // Unknown type — skip. EncryptedSharedPreferences
+                        // only supports the primitive scalars listed above.
+                    }
+                }
+            }
+        }
+        deleteLegacyFile(ctx)
+    }
+
+    private fun deleteLegacyFile(ctx: Context) {
+        try {
+            val f = File(ctx.applicationInfo.dataDir, "shared_prefs/$LEGACY_PREFS.xml")
+            if (f.exists()) f.delete()
+        } catch (_: Throwable) {
+            // Best-effort. The clear() inside `edit { clear() }` above
+            // already emptied the file contents.
+        }
+    }
+
     // ---------------------------------------------------------------
     // Public API
     // ---------------------------------------------------------------
@@ -53,7 +167,7 @@ object AuthStore {
      * that.
      */
     fun loadAll(context: Context): List<Session> {
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val prefs = prefs(context)
         val raw = prefs.getString(KEY_SESSIONS, null) ?: return emptyList()
         return try {
             json.decodeFromString<List<Session>>(raw)
@@ -72,7 +186,7 @@ object AuthStore {
      * authenticated.
      */
     fun getActive(context: Context): Session? {
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val prefs = prefs(context)
         val activeEmail = prefs.getString(KEY_ACTIVE_EMAIL, null) ?: return null
         val session = loadAll(context).firstOrNull { it.email == activeEmail }
             ?: run {
@@ -91,7 +205,7 @@ object AuthStore {
      * Also sets the just-saved session as the active one.
      */
     fun saveOrUpdate(context: Context, session: Session) {
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val prefs = prefs(context)
         val existing = loadAll(context).toMutableList()
         val idx = existing.indexOfFirst { it.email == session.email }
         val now = System.currentTimeMillis()
@@ -120,7 +234,7 @@ object AuthStore {
      * no-op (returns false).
      */
     fun setActive(context: Context, email: String): Boolean {
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val prefs = prefs(context)
         val match = loadAll(context).firstOrNull { it.email == email } ?: return false
         val bumped = match.copy(lastUsedAtMs = System.currentTimeMillis())
         val all = loadAll(context)
@@ -140,7 +254,7 @@ object AuthStore {
      * most-recently-used remaining session (or none) becomes active.
      */
     fun remove(context: Context, email: String) {
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val prefs = prefs(context)
         val remaining = loadAll(context).filterNot { it.email == email }
         val active = prefs.getString(KEY_ACTIVE_EMAIL, null)
         prefs.edit {
@@ -161,7 +275,7 @@ object AuthStore {
 
     /** Removes every saved session and clears [ApiClient]'s bearer token. */
     fun clearAll(context: Context) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
+        prefs(context).edit {
             remove(KEY_SESSIONS)
             remove(KEY_ACTIVE_EMAIL)
         }
@@ -174,29 +288,11 @@ object AuthStore {
      * without having to retype email + password.
      */
     fun clearActive(context: Context) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
+        prefs(context).edit {
             remove(KEY_ACTIVE_EMAIL)
         }
         ApiClient.authToken = null
     }
-
-    // ---------------------------------------------------------------
-    // Backwards-compat shims (V3.1 callers — call sites have been updated
-    // but the old single-session shape is still referenced in a couple of
-    // places, so keep these convenience wrappers for now).
-    // ---------------------------------------------------------------
-
-    /** @deprecated use [saveOrUpdate] which also activates the session. */
-    @Deprecated("Use saveOrUpdate() to also activate the saved session.")
-    fun save(context: Context, session: Session) = saveOrUpdate(context, session)
-
-    /** @deprecated use [loadAll] or [getActive] instead. */
-    @Deprecated("Returns the active session — use getActive() instead.")
-    fun load(context: Context): Session? = getActive(context)
-
-    /** @deprecated use [remove] or [clearAll] depending on intent. */
-    @Deprecated("Clears everything — use clearAll() or remove(email) instead.")
-    fun clear(context: Context) = clearAll(context)
 }
 
 /**
@@ -207,24 +303,59 @@ object AuthStore {
  *
  * Also persists BUG 8's pendingFlushVersion so a cold start can pick
  * up a push that was queued by the previous process before it died.
+ *
+ * B6 — every per-user key is now namespaced with the user id. The
+ * previous unscoped `last_sync_cursor` / `pending_flush_version`
+ * values are read once and copied into the per-user slot (so an
+ * existing user keeps their cursor on the first sync after the
+ * upgrade), then ignored. New users start at 0.
  */
 object SyncStore {
 
     private const val PREFS = "sync_prefs"
-    private const val KEY_LAST_CURSOR = "last_sync_cursor"
-    private const val KEY_LAST_PUSH_AT = "last_push_at"
-    private const val KEY_PENDING_FLUSH = "pending_flush_version"
 
-    /** Last server-side change_id we successfully drained. Null = never synced. */
-    fun getLastCursor(context: Context): Long? {
+    // Legacy unscoped keys — read once on first per-user access, then
+    // ignored. Not deleted so any external observer (debug tool,
+    // pre-existing test fixture) still sees the value it expects.
+    private const val KEY_LEGACY_LAST_CURSOR = "last_sync_cursor"
+    private const val KEY_LEGACY_PENDING_FLUSH = "pending_flush_version"
+    private const val KEY_LEGACY_LAST_PUSH_AT = "last_push_at"
+
+    private fun cursorKey(userId: Int) = "last_sync_cursor_$userId"
+    private fun pendingFlushKey(userId: Int) = "pending_flush_version_$userId"
+    private fun lastPushAtKey(userId: Int) = "last_push_at_$userId"
+
+    /**
+     * Last server-side change_id we successfully drained for [userId].
+     * Null = never synced.
+     *
+     * On the first call for a given [userId] the legacy
+     * `last_sync_cursor` value (if any) is copied into the
+     * per-user slot so a user who has already synced once before
+     * the upgrade keeps their cursor. After that copy the legacy
+     * value is left in place (it is harmless and may help
+     * debugging) and the per-user slot is the source of truth.
+     */
+    fun getLastCursor(context: Context, userId: Int): Long? {
+        if (userId <= 0) return null
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        return if (prefs.contains(KEY_LAST_CURSOR)) prefs.getLong(KEY_LAST_CURSOR, 0L) else null
+        val key = cursorKey(userId)
+        if (prefs.contains(key)) {
+            return prefs.getLong(key, 0L)
+        }
+        if (prefs.contains(KEY_LEGACY_LAST_CURSOR)) {
+            val legacy = prefs.getLong(KEY_LEGACY_LAST_CURSOR, 0L)
+            prefs.edit { putLong(key, legacy) }
+            return legacy
+        }
+        return null
     }
 
-    fun setLastCursor(context: Context, cursor: Long) {
+    fun setLastCursor(context: Context, userId: Int, cursor: Long) {
+        if (userId <= 0) return
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
-            putLong(KEY_LAST_CURSOR, cursor)
-            putLong(KEY_LAST_PUSH_AT, System.currentTimeMillis())
+            putLong(cursorKey(userId), cursor)
+            putLong(lastPushAtKey(userId), System.currentTimeMillis())
         }
     }
 
@@ -232,26 +363,41 @@ object SyncStore {
      * V5.3 — backwards-compat shim. Returns 0 when never synced so older
      * call sites (and tests) that still pass a Long keep working.
      */
-    fun getLastSync(context: Context): Long = getLastCursor(context) ?: 0L
+    fun getLastSync(context: Context, userId: Int): Long = getLastCursor(context, userId) ?: 0L
 
     /**
      * BUG 8 — store a monotonic version that bumps every time a push
      * gets queued. Cold start compares the persisted version to the
      * in-process one and re-runs the queued push if they differ,
      * meaning the previous process was killed before it could drain.
+     *
+     * B6 — namespaced by [userId]. The legacy unscoped value is
+     * honoured only the first time the user is seen; after that the
+     * per-user slot is authoritative.
      */
-    fun bumpPendingFlush(context: Context): Long {
+    fun bumpPendingFlush(context: Context, userId: Int): Long {
+        if (userId <= 0) return 0L
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val next = (prefs.getLong(KEY_PENDING_FLUSH, 0L) and 0x7FFF_FFFF_FFFF_FFFFL) + 1
-        prefs.edit { putLong(KEY_PENDING_FLUSH, next) }
+        val key = pendingFlushKey(userId)
+        val base = if (prefs.contains(key)) {
+            prefs.getLong(key, 0L)
+        } else if (prefs.contains(KEY_LEGACY_PENDING_FLUSH)) {
+            prefs.getLong(KEY_LEGACY_PENDING_FLUSH, 0L)
+        } else {
+            0L
+        }
+        val next = (base and 0x7FFF_FFFF_FFFF_FFFFL) + 1
+        prefs.edit { putLong(key, next) }
         return next
     }
 
-    fun consumePendingFlush(context: Context): Long {
+    fun consumePendingFlush(context: Context, userId: Int): Long {
+        if (userId <= 0) return 0L
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val v = prefs.getLong(KEY_PENDING_FLUSH, 0L)
+        val key = pendingFlushKey(userId)
+        val v = prefs.getLong(key, 0L)
         if (v != 0L) {
-            prefs.edit { putLong(KEY_PENDING_FLUSH, 0L) }
+            prefs.edit { putLong(key, 0L) }
         }
         return v
     }

@@ -2,6 +2,7 @@ package com.example.notes.data.remote
 
 import android.content.Context
 import com.example.notes.data.local.AuthStore
+import com.example.notes.util.Logger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -18,6 +19,10 @@ class AuthRepository(
     private val context: Context,
     private val onSessionChanged: () -> Unit = {}
 ) {
+
+    private companion object {
+        private const val TAG = "AuthRepository"
+    }
 
     // ---------------------------------------------------------------
     // Auth round-trips
@@ -50,10 +55,17 @@ class AuthRepository(
      * the Google Sign-In SDK and passes it here; this method forwards it
      * to the backend which does the actual verification and issues a
      * regular JWT for the mobile app to use.
+     *
+     * C3 — the optional [nonce] is the raw per-attempt replay-protection
+     * value (the SHA-256 hash is what was sent to Google as the
+     * `nonce` request param). Forwarded to the backend, which stores
+     * it for 5 minutes and rejects any Google ID token whose `nonce`
+     * claim doesn't match a still-valid entry. Null disables the
+     * replay check on the server.
      */
-    suspend fun googleLogin(idToken: String): Result<AuthStore.Session> =
+    suspend fun googleLogin(idToken: String, nonce: String? = null): Result<AuthStore.Session> =
         withContext(Dispatchers.IO) {
-            val result = ApiClient.googleLogin(idToken).map { it.toSession() }
+            val result = ApiClient.googleLogin(idToken, nonce).map { it.toSession() }
             result.onSuccess {
                 AuthStore.saveOrUpdate(context, it)
                 onSessionChanged()
@@ -94,31 +106,37 @@ class AuthRepository(
     }
 
     /**
-     * Signs out of the active account *without* removing its saved
-     * session — the user can re-sign-in later from the Login screen.
+     * C1 — signs out of the active account. Best-effort POSTs to
+     * `/auth/logout` so the server can revoke the JWT, then clears
+     * the *entire* local store (including other saved sessions):
+     * saved accounts on disk carry tokens, so leaving them behind
+     * after a logout would defeat the point of encrypting the store.
+     * After this call the user is forced through the Google Sign-In
+     * flow again.
      */
-    fun logoutActiveKeepSessions() {
-        AuthStore.clearActive(context)
-        onSessionChanged()
-    }
-
-    /** Removes every saved session and clears the bearer token. */
-    fun clearAll() {
+    suspend fun logoutActiveKeepSessions() = withContext(Dispatchers.IO) {
+        try {
+            ApiClient.logout()
+        } catch (t: Throwable) {
+            Logger.w(TAG, "Server logout failed (proceeding with local wipe)", t)
+        }
         AuthStore.clearAll(context)
         onSessionChanged()
     }
 
-    // ---------------------------------------------------------------
-    // Backwards-compat
-    // ---------------------------------------------------------------
-
-    /** @deprecated use [activeSession]. */
-    @Deprecated("Use activeSession() instead.")
-    fun currentSession(): AuthStore.Session? = activeSession()
-
-    /** @deprecated use [clearAll]. */
-    @Deprecated("Use clearAll() instead.")
-    fun logout() = clearAll()
+    /**
+     * Removes every saved session and clears the bearer token. Also
+     * notifies the server so the tokens get revoked (best-effort).
+     */
+    suspend fun clearAll() = withContext(Dispatchers.IO) {
+        try {
+            ApiClient.logout()
+        } catch (t: Throwable) {
+            Logger.w(TAG, "Server logout failed (proceeding with local wipe)", t)
+        }
+        AuthStore.clearAll(context)
+        onSessionChanged()
+    }
 
     private fun AuthResponse.toSession() = AuthStore.Session(
         email = user.email,

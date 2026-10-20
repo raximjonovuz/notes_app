@@ -1,8 +1,53 @@
+import java.io.File
+import java.util.Properties
+import org.gradle.api.GradleException
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
     alias(libs.plugins.kotlin.serialization)
+}
+
+// C5 — load release keystore credentials from app/keystore.properties (gitignored).
+// The file MUST exist for release builds; debug builds are unaffected.
+//
+// Values are captured as plain Strings so the hooks below don't drag a
+// Gradle `Project` (or any other script-proxy) reference into the
+// configuration cache.
+val keystorePropertiesFile: File = File(rootDir, "app/keystore.properties")
+val keystorePropertiesAbsolutePath: String = keystorePropertiesFile.absolutePath
+val keystoreProperties = Properties().apply {
+    if (keystorePropertiesFile.exists()) {
+        keystorePropertiesFile.inputStream().use { load(it) }
+    }
+}
+
+val releaseSigningTaskNames: Set<String> = setOf(
+    "validateSigningRelease",
+    "packageRelease",
+    "bundleRelease",
+    "assembleRelease"
+)
+
+// C5 — explicit fail-fast for release packaging when the keystore is
+// missing. The hook lives on the Gradle task graph (outside the android
+// block) and only inspects plain Strings / Files, which play nicely with
+// the configuration cache. `whenReady` fires after the graph is computed
+// but before any task runs, so throwing here aborts the release build
+// with the right error before AGP's `validateSigningRelease` reports its
+// own (less informative) keystore error.
+@Suppress("UnstableApiUsage")
+gradle.taskGraph.whenReady {
+    val needsRelease = allTasks.any { it.name in releaseSigningTaskNames }
+    if (!needsRelease) return@whenReady
+    val keyFile = File(keystorePropertiesAbsolutePath)
+    if (!keyFile.exists()) {
+        throw GradleException(
+            "keystore.properties not found at $keystorePropertiesAbsolutePath " +
+                "— required for release builds."
+        )
+    }
 }
 
 android {
@@ -21,25 +66,44 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
-    buildTypes {
-        release {
-            // V5.0.2: testers want a release-style APK that they can
-            // sideload without an attached debug key. The Android
-            // Gradle Plugin signs release builds with the debug
-            // signing config when no signingConfig is specified, so
-            // this is installable on any device. When the project
-            // gets a real keystore this block should reference it.
-            signingConfig = signingConfigs.getByName("debug")
-            optimization {
-                enable = false
-            }
-            isMinifyEnabled = false
-            isShrinkResources = false
+    // C5 — release signing config is wired up only when keystore.properties
+    // is present. The release build type refuses to compile without it so
+    // nobody ships a debug-signed APK by accident.
+    signingConfigs {
+        create("release") {
+            keyAlias = keystoreProperties["keyAlias"] as String?
+            keyPassword = keystoreProperties["keyPassword"] as String?
+            val storeFileName = keystoreProperties["storeFile"] as String?
+            storeFile = storeFileName?.let { rootProject.file("app/$it") }
+            storePassword = keystoreProperties["storePassword"] as String?
         }
     }
+
+    buildTypes {
+        release {
+            // C5 — wire up the release signing config (defined above) and
+            // turn on R8 / resource shrinking. The signingConfig may be
+            // populated with null fields when `keystore.properties` is
+            // missing; the doFirst block below fails release packaging
+            // with a clear error in that case so debug builds remain
+            // unaffected.
+            signingConfig = signingConfigs.getByName("release")
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+        }
+    }
+
+    // C5 — explicit fail-fast for release packaging is registered at
+    // the Gradle task-graph level (top of this file) so the doFirst
+    // closure doesn't need to capture a `Project` reference — which
+    // would otherwise trip the configuration cache.
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
     buildFeatures {
         compose = true
@@ -56,6 +120,16 @@ android {
             isIncludeAndroidResources = true
         }
     }
+}
+
+// B12 — emit Room's exported schema JSONs into app/schemas so a
+// `MigrationTestHelper` (test-only) can pin the v9/v10/v11 schema
+// shape and assert that MIGRATION_9_10 / MIGRATION_10_11 don't
+// accidentally drop a column. The folder is gitignored by AGP's
+// default `*.json` in app/build, so we add it explicitly to the
+// repo via a sibling `.gitignore` allow.
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
 }
 
 dependencies {
@@ -91,6 +165,17 @@ dependencies {
     // remains the manual trigger; the periodic worker is a safety net
     // for users who never tap it.
     implementation(libs.androidx.work.runtime.ktx)
+
+    // C1 — EncryptedSharedPreferences for token storage on disk.
+    implementation(libs.androidx.security.crypto)
+
+    // C3 — Credential Manager + Google Identity Services. The
+    // `credentials-play-services-auth` artefact pulls in the Play
+    // Services auth shim so the bottom-sheet credential picker works
+    // on devices that don't have the system Credential Manager yet.
+    implementation(libs.androidx.credentials)
+    implementation(libs.androidx.credentials.play.services)
+    implementation(libs.googleid.lib)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

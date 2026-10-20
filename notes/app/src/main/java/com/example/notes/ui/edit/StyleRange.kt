@@ -10,6 +10,7 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
+import kotlinx.serialization.Serializable
 
 /**
  * V2.6 — per-character rich-text styling.
@@ -33,6 +34,7 @@ import androidx.compose.ui.text.withStyle
  * ignore the trailing token, newer builds will fail to decode it.
  */
 @Immutable
+@Serializable
 data class StyleRange(
     val start: Int,
     val end: Int,

@@ -6,11 +6,15 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "db:migrate": "wrangler d1 migrations apply notes-db --local",
-    "db:migrate:remote": "wrangler d1 migrations apply notes-db --remote"
+    "db:migrate:remote": "wrangler d1 migrations apply notes-db --remote",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20250101.0",
-    "typescript": "^5.5.0",
-    "wrangler": "^3.90.0"
+    "@cloudflare/vitest-pool-workers": "^0.8.0",
+    "@cloudflare/workers-types": "^5.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0",
+    "wrangler": "^4.20.0"
   }
 }

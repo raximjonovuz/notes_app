@@ -1,4 +1,5 @@
 import { Env } from './types';
+import { verifyToken } from './auth';
 
 /**
  * JSON response with CORS headers.
@@ -28,7 +29,8 @@ export function errorResponse(message: string, status = 400): Response {
 
 /**
  * Extract user id from Authorization: Bearer <token> header.
- * Returns null if missing or invalid.
+ * Returns null if missing or invalid (including server misconfiguration —
+ * in that case verifyToken throws and we let the caller surface a 5xx).
  */
 export async function getUserId(request: Request, env: Env): Promise<number | null> {
     const auth = request.headers.get('Authorization');
@@ -36,8 +38,24 @@ export async function getUserId(request: Request, env: Env): Promise<number | nu
     const match = auth.match(/^Bearer\s+(.+)$/i);
     if (!match) return null;
     const token = match[1].trim();
-    const { verifyToken } = await import('./auth');
     return await verifyToken(token, env);
+}
+
+/**
+ * Best-effort client IP for rate-limiting and audit logs. Cloudflare
+ * Workers exposes `CF-Connecting-IP` as the canonical (already-trusted)
+ * client address; we fall back to the leftmost X-Forwarded-For entry,
+ * then to the literal string `"unknown"`. Never throw.
+ */
+export function getClientIp(request: Request): string {
+    const cf = request.headers.get('CF-Connecting-IP');
+    if (cf) return cf.trim();
+    const xff = request.headers.get('X-Forwarded-For');
+    if (xff) {
+        const first = xff.split(',')[0]?.trim();
+        if (first) return first;
+    }
+    return 'unknown';
 }
 
 /**

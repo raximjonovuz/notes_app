@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -45,6 +46,14 @@ private const val IMAGE_URI_SEPARATOR = "|||"
  * racing it.
  */
 private const val POST_COMPOSE_DEBOUNCE_MS = 600L
+
+/**
+ * F-05 — how often the editor re-reads the image-upload retry
+ * counter while a note is open. The push pass bumps the counter every
+ * ~5 s (its own debounce), so 6 s is just above that: we notice a
+ * "gave up" transition within one push cycle of it happening.
+ */
+private const val IMAGE_UPLOAD_POLL_MS = 6_000L
 
 private fun parseImageUris(raw: String): List<String> {
     if (raw.isBlank()) return emptyList()
@@ -121,6 +130,29 @@ class NoteEditViewModel(
 
     private val _saveStatus = MutableStateFlow<SaveStatus>(SaveStatus.Idle)
     val saveStatus: StateFlow<SaveStatus> = _saveStatus.asStateFlow()
+
+    /**
+     * F-05 — `true` when this note's image upload gave up (the
+     * background push pass burned its whole retry budget without the
+     * R2 upload succeeding). The editor renders a warning badge on
+     * the affected image and offers a "retry" action.
+     *
+     * Kept in a separate [StateFlow] rather than inside
+     * [NoteEditState] because it is NOT part of the note's content —
+     * it is a transient UI flag, and folding it into the state would
+     * make the undo/redo snapshots carry it around.
+     */
+    private val _imageUploadFailed = MutableStateFlow(false)
+    val imageUploadFailed: StateFlow<Boolean> = _imageUploadFailed.asStateFlow()
+
+    /**
+     * F-05 — the local `file://` URIs of the images that failed to
+     * upload. The editor uses this to put the warning badge on the
+     * right image block and to know which file to re-upload when the
+     * user taps "retry".
+     */
+    private val _failedImageUris = MutableStateFlow<Set<String>>(emptySet())
+    val failedImageUris: StateFlow<Set<String>> = _failedImageUris.asStateFlow()
 
     /**
      * V5.1 — single-shot messages that the editor screen surfaces as a
@@ -269,6 +301,110 @@ class NoteEditViewModel(
             }
             isInitialized = true
         }
+
+        // F-05 — watch the image-upload retry counter while the note
+        // is open so the user learns that their image never made it
+        // to the server, instead of silently wondering why the image
+        // is missing on their other device.
+        //
+        // The counter lives in [com.example.notes.util.ImageRetryStore]
+        // and is bumped by the background push pass every ~5 s while
+        // the note is deferred. We poll it every 6 s (just above the
+        // push debounce) and fire a one-shot snackbar the first time
+        // we observe the "gave up" transition.
+        viewModelScope.launch {
+            var announced = false
+            while (isActive) {
+                delay(IMAGE_UPLOAD_POLL_MS)
+                val current = _state.value
+                if (current.id == 0L) continue
+                val localUris = current.blocks
+                    .filterIsInstance<ContentBlock.ImageBlock>()
+                    .map { it.uri }
+                    .filter { com.example.notes.util.LocalImageUri.isLocalImageUri(it, appContext) }
+                if (localUris.isEmpty()) {
+                    _imageUploadFailed.value = false
+                    _failedImageUris.value = emptySet()
+                    continue
+                }
+                val gaveUp = com.example.notes.util.ImageRetryStore
+                    .noteGaveUpImage(appContext, current.id)
+                _imageUploadFailed.value = gaveUp
+                _failedImageUris.value = if (gaveUp) localUris.toSet() else emptySet()
+                if (gaveUp && !announced) {
+                    announced = true
+                    emitMessage(
+                        "Rasm yuklanmadi, qayta urinib ko'ring"
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * F-05 — re-upload a single image that previously failed, and
+     * reset its retry budget so the push pass stops deferring the
+     * note.
+     *
+     * The local file is still on disk (the upload failed, it wasn't
+     * deleted), so we can hand the very same `file://` URI back to
+     * [ApiClient.uploadImage]. On success the block is rewritten to
+     * the public R2 URL, the note is saved (which bumps
+     * `dirtyRevision`), and the next push ships the real URL to the
+     * server — replacing the `pending-image:` marker.
+     */
+    fun retryImageUpload(localUri: String) {
+        val current = _state.value
+        if (current.id == 0L) return
+        // Clear the failed flag immediately so the badge
+        // disappears while the retry is in flight.
+        _imageUploadFailed.value = false
+        _failedImageUris.value = _failedImageUris.value - localUri
+        applicationScope.launch {
+            try {
+                val result = ApiClient.uploadImage(localUri.toUri(), appContext)
+                result.fold(
+                    onSuccess = { response ->
+                        Logger.d("NoteEditVM",
+                            "retryImageUpload: OK for $localUri -> ${response.url}")
+                        val fresh = _state.value
+                        val rewritten = fresh.blocks.map { block ->
+                            if (block is ContentBlock.ImageBlock &&
+                                block.uri == localUri
+                            ) {
+                                block.copy(uri = response.url)
+                            } else block
+                        }
+                        if (rewritten != fresh.blocks) {
+                            _state.value = fresh.copy(blocks = rewritten)
+                            // The saved content now carries the public
+                            // URL, so the next push replaces the
+                            // `pending-image:` marker with it.
+                            saveNow()
+                        }
+                        // The image is on the server now — clear the
+                        // retry budget so the note isn't deferred
+                        // any more.
+                        com.example.notes.util.ImageRetryStore
+                            .reset(appContext, fresh.id)
+                        emitMessage("Rasm yuklandi")
+                    },
+                    onFailure = { e ->
+                        Logger.w("NoteEditVM",
+                            "retryImageUpload FAILED for $localUri", e)
+                        // Put the flag back so the badge reappears.
+                        _imageUploadFailed.value = true
+                        _failedImageUris.value = _failedImageUris.value + localUri
+                        emitMessage("Rasm yuklanmadi, qayta urinib ko'ring")
+                    }
+                )
+            } catch (t: Throwable) {
+                Logger.w("NoteEditVM", "retryImageUpload crashed", t)
+                _imageUploadFailed.value = true
+                _failedImageUris.value = _failedImageUris.value + localUri
+                emitMessage("Rasm yuklanmadi, qayta urinib ko'ring")
+            }
+        }
     }
 
     /* ---------- Title ---------- */
@@ -385,11 +521,29 @@ class NoteEditViewModel(
                 // previous PNG/JPG-only check mis-classified every other
                 // format as `.img` and produced confusing "img_xxx.img"
                 // names that no other app could open.
+                //
+                // D3 — use a UUID for the filename instead of
+                // `System.currentTimeMillis()`. Two images added in the
+                // same millisecond (rare but real — IME suggestions can
+                // accept two picks in one frame) would otherwise collide
+                // and the second `writeBytes` would silently truncate
+                // the first.
+                //
+                // F-28 — write into `filesDir/images/` (not the root of
+                // `filesDir`) so the entire directory can be excluded
+                // from cloud backup / device transfer via the Android
+                // backup XML rules. The prefix (which images use in
+                // their URI) is `file://<filesDir>/images/img_<UUID>.<ext>`
+                // and matches the `localFileUriPrefix` used by
+                // [NotesSyncRepository] to defer pushes while a local
+                // image is in flight.
                 val ext = com.example.notes.util.ImageSniffer
                     .detect(bytes)?.ext ?: "img"
+                val imagesDir = java.io.File(appContext.filesDir, "images")
+                    .apply { if (!exists()) mkdirs() }
                 val out = java.io.File(
-                    appContext.filesDir,
-                    "img_${System.currentTimeMillis()}.$ext"
+                    imagesDir,
+                    "img_${java.util.UUID.randomUUID()}.$ext"
                 )
                 out.writeBytes(bytes)
                 out
@@ -452,10 +606,16 @@ class NoteEditViewModel(
                         }
                     },
                     onFailure = { e ->
-                        Logger.w(
-                            "NoteEditVM",
+                        // Log.e (not Logger.w) so the failure shows up
+                        // even when log filters are set to ERROR-only.
+                        // The throwable's `message` is the masked
+                        // IOException body the server returned, so we
+                        // already get the HTTP status + body preview
+                        // without the token being in the URL.
+                        android.util.Log.e(
+                            "Upload",
                             "addImageUri: upload FAILED for $localUriString; " +
-                                "keeping local URI. Cause: ${e.message ?: e.javaClass.simpleName}",
+                                "cause: ${e.message ?: e.javaClass.simpleName}",
                             e
                         )
                         emitMessage(
@@ -966,7 +1126,18 @@ class NoteEditViewModel(
             val hasAnyText = current.blocks.any {
                 it is ContentBlock.TextBlock && it.text.isNotEmpty()
             }
-            if (current.title.isBlank() && !hasAnyImage && !hasAnyText) {
+            // B10 — empty-note save policy:
+            //   - Brand-new note (id == 0L) with no title, no text and
+            //     no image: skip. There's nothing to save and we'd
+            //     otherwise create a row of just `deletedAt = NULL,
+            //     title = ''` that pollutes the list.
+            //   - Existing note (id != 0L) with no title, no text and
+            //     no image: SAVE anyway. The user explicitly cleared
+            //     it; the next push will mirror the empty state to the
+            //     server, and an accidental back-tap won't silently
+            //     restore the previous content.
+            val isCompletelyEmpty = current.title.isBlank() && !hasAnyImage && !hasAnyText
+            if (isCompletelyEmpty && current.id == 0L) {
                 return@withLock
             }
 

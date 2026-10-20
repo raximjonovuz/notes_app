@@ -18,6 +18,13 @@ import java.util.concurrent.TimeUnit
  * updates. The user can still tap the Sync button for an immediate
  * round-trip — this worker is a safety net for the absent-minded user.
  *
+ * B2 — the worker no longer swallows the sync result. A network blip
+ * surfaces as [Result.retry] (WorkManager will back off and try again)
+ * while a 401 (session expired) returns [Result.success] so the
+ * periodic schedule isn't burned retrying every 6 hours forever; the
+ * UI will pick up the cleared active session the next time the user
+ * opens the app and route them back to the Login screen.
+ *
  * Network constraint is [NetworkType.CONNECTED] so the worker doesn't
  * burn battery trying to sync over Wi-Fi-only on a mobile-only device.
  */
@@ -29,19 +36,39 @@ class BackgroundSyncWorker(
     override suspend fun doWork(): Result {
         val repo = SyncRepositoryLocator.get() ?: return Result.success()
         return try {
-            // V5.0.2: this worker is the periodic safety net — it always
-            // pushes (no debounce), then pulls. flushPendingPush is the
-            // right entry point here so any pending debounced push from
-            // the editor is also flushed.
-            val pushed = repo.flushPendingPush()
-            val pulled = repo.syncIfOnline()
-            Logger.d(
-                "BackgroundSyncWorker",
-                "doWork: pushed=$pushed pulled=$pulled"
-            )
-            Result.success()
+            val outcome = repo.syncIfOnline()
+            when (outcome) {
+                is NotesSyncRepository.SyncOutcome.Success -> {
+                    Logger.d("BackgroundSyncWorker", "doWork: success")
+                    Result.success()
+                }
+                is NotesSyncRepository.SyncOutcome.Skipped -> {
+                    Logger.d("BackgroundSyncWorker", "doWork: skipped (offline or no session)")
+                    // Skipped is not a failure; the next period will try
+                    // again. Returning success keeps WorkManager from
+                    // applying a backoff.
+                    Result.success()
+                }
+                is NotesSyncRepository.SyncOutcome.Unauthorized -> {
+                    Logger.w("BackgroundSyncWorker", "doWork: 401 — session cleared, no retry")
+                    // Don't retry: the session is gone, retrying will just
+                    // 401 again. The UI will route the user to Login.
+                    Result.success()
+                }
+                is NotesSyncRepository.SyncOutcome.Failed -> {
+                    Logger.w(
+                        "BackgroundSyncWorker",
+                        "doWork: transport failure (${outcome.reason}) — retrying"
+                    )
+                    // Network or 5xx — let WorkManager apply its default
+                    // exponential backoff and try again on the next
+                    // period. The previous behaviour swallowed the error
+                    // and reported success, which masked real outages.
+                    Result.retry()
+                }
+            }
         } catch (t: Throwable) {
-            Logger.w("BackgroundSyncWorker", "doWork failed", t)
+            Logger.w("BackgroundSyncWorker", "doWork threw", t)
             Result.retry()
         }
     }
@@ -58,10 +85,12 @@ class BackgroundSyncWorker(
                 .setRequiredNetworkType(NetworkType.CONNECTED)
                 .build()
             val request = PeriodicWorkRequestBuilder<BackgroundSyncWorker>(
-                1, TimeUnit.DAYS,
-                // Flex window: WorkManager can run the job anywhere within
-                // this window after the period. The flex helps the OS
-                // batch device wake-ups across apps.
+                // B2 — was 1 day; bumped to 6 hours. The previous
+                // schedule was so long that a user who took their
+                // device offline for the weekend and came back online
+                // would see up to 24 h of stale notes before the
+                // background pass ran. 6 h is the same cadence as the
+                // Flex window WorkManager already uses internally.
                 6, TimeUnit.HOURS
             )
                 .setConstraints(constraints)

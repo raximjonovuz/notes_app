@@ -1,13 +1,33 @@
 <?xml version="1.0" encoding="utf-8"?><!--
-   Sample backup rules file; uncomment and customize as necessary.
+   C1 — backup rules for pre-Android 12 devices.
+
+   The legacy SharedPreferences file holding auth tokens must NEVER
+   enter a Google backup or device-transfer payload, regardless of
+   whether the app currently runs on top of EncryptedSharedPreferences
+   (production) or has fallen back to plain SharedPreferences on a
+   device with a broken Android Keystore.
+
+   Sync prefs are also excluded because per-user cursors carry user
+   identifiers that we don't want leaking outside the device either.
+
+   D3 / F-28 — local rasm fayllari (`img_<UUID>.<ext>`)
+   `Context.getFilesDir()/images/` papkasida yotadi (qarang
+   NoteEditViewModel.kt:407-414 va LocalImageCleanup.kt). Android
+   Auto Backup `domain="file"` ning `path` atributida `*` glob
+   belgisini qo'llab-quvvatlamaydi — faqat literal fayl/papka nomlari
+   mos keladi (https://developer.android.com/guide/topics/data/autobackup#XMLSyntax),
+   shuning uchun butun `images/` papkasi exclude qilinadi. Bu
+   papka faqat editor yuklanayotgan rasm nusxalarini saqlaydi
+   (upload muvaffaqiyatidan keyin NoteEditViewModel URL ni
+   `https://…/files/…` R2 manziliga almashtiradi, qarang
+   NoteEditViewModel.kt:441-459), demak backup'dan chiqarish
+   foydalanuvchi ma'lumotini yo'qotmaydi.
+
    See https://developer.android.com/guide/topics/data/autobackup
-   for details.
-   Note: This file is ignored for devices older than API 31
-   See https://developer.android.com/about/versions/12/backup-restore
 -->
 <full-backup-content>
-    <!--
-   <include domain="sharedpref" path="."/>
-   <exclude domain="sharedpref" path="device.xml"/>
--->
+    <exclude domain="sharedpref" path="auth_prefs.xml"/>
+    <exclude domain="sharedpref" path="auth_prefs_secure.xml"/>
+    <exclude domain="sharedpref" path="sync_prefs.xml"/>
+    <exclude domain="file" path="images"/>
 </full-backup-content>

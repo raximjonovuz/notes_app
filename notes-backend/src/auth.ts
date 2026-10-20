@@ -89,7 +89,39 @@ export async function verifyPassword(password: string, stored: string): Promise<
 /* JWT (HS256) — header.payload.signature, all base64url encoded      */
 /* ------------------------------------------------------------------ */
 
-const JWT_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
+const JWT_TTL_SECONDS = 60 * 60 * 24 * 7; // A7: 30 → 7 kun
+const JWT_SECRET_MIN_LENGTH = 32;
+
+/**
+ * Throw a clear, log-safe error if JWT_SECRET is missing or weak.
+ * We log the *reason* but never the secret itself.
+ */
+function assertJwtSecret(env: Env): void {
+    if (!env.JWT_SECRET || env.JWT_SECRET.length < JWT_SECRET_MIN_LENGTH) {
+        // eslint-disable-next-line no-console
+        console.error(
+            `[auth] JWT_SECRET is missing or shorter than ${JWT_SECRET_MIN_LENGTH} chars — refusing to sign/verify tokens`
+        );
+        throw new Error('JWT_SECRET misconfigured');
+    }
+}
+
+/**
+ * Generate a v4-ish UUID. Workers' `crypto.randomUUID()` is preferred;
+ * the manual fallback exists for environments where it's missing.
+ */
+function generateJti(): string {
+    const c = crypto as unknown as { randomUUID?: () => string };
+    if (typeof c.randomUUID === 'function') {
+        return c.randomUUID();
+    }
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
+    bytes[8] = (bytes[8] & 0x3f) | 0x80; // variant 10
+    const hex = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
 
 /**
  * base64url encode (no padding).
@@ -124,14 +156,29 @@ function base64UrlDecode(input: string): Uint8Array {
 
 /**
  * Build a JWT for the given userId, signed with env.JWT_SECRET (HS256).
+ * Throws if JWT_SECRET is missing/weak. The current `token_version` is
+ * fetched from D1 and embedded in the payload (`tv`) so verifyToken()
+ * can later detect revoked tokens.
  */
 export async function generateToken(userId: number, env: Env): Promise<string> {
+    assertJwtSecret(env);
+
+    const row = await env.DB
+        .prepare('SELECT token_version FROM users WHERE id = ?')
+        .bind(userId)
+        .first<{ token_version: number }>();
+    if (!row) {
+        throw new Error('User not found');
+    }
+
     const header = { alg: 'HS256', typ: 'JWT' };
     const now = Math.floor(Date.now() / 1000);
     const payload = {
         sub: String(userId),
         iat: now,
         exp: now + JWT_TTL_SECONDS,
+        tv: row.token_version,
+        jti: generateJti(),
     };
     const headerB64 = base64UrlEncode(JSON.stringify(header));
     const payloadB64 = base64UrlEncode(JSON.stringify(payload));
@@ -155,12 +202,34 @@ export async function generateToken(userId: number, env: Env): Promise<string> {
 
 /**
  * Verify a JWT. Returns the userId (sub) if valid, otherwise null.
+ *
+ * Verification order (cheap → expensive):
+ *   1. Structural sanity (3 segments)
+ *   2. Header `alg === "HS256"` (A7: defeats algorithm-confusion attacks)
+ *   3. HMAC signature
+ *   4. Payload JSON parse + `exp` check
+ *   5. DB lookup of `token_version` and comparison with JWT's `tv`
  */
 export async function verifyToken(token: string, env: Env): Promise<number | null> {
+    assertJwtSecret(env);
+
     const parts = token.split('.');
     if (parts.length !== 3) return null;
     const [headerB64, payloadB64, sigB64] = parts;
     const signingInput = `${headerB64}.${payloadB64}`;
+
+    // Header alg check BEFORE signature verification — a `none` or
+    // attacker-chosen alg must never reach the crypto layer.
+    let headerAlg: string;
+    try {
+        const header = JSON.parse(
+            new TextDecoder().decode(base64UrlDecode(headerB64))
+        ) as { alg?: unknown };
+        headerAlg = typeof header.alg === 'string' ? header.alg : '';
+    } catch {
+        return null;
+    }
+    if (headerAlg !== 'HS256') return null;
 
     const key = await crypto.subtle.importKey(
         'raw',
@@ -182,7 +251,7 @@ export async function verifyToken(token: string, env: Env): Promise<number | nul
     }
     if (!valid) return null;
 
-    let payload: { sub?: string; exp?: number };
+    let payload: { sub?: string; exp?: number; tv?: number };
     try {
         payload = JSON.parse(new TextDecoder().decode(base64UrlDecode(payloadB64)));
     } catch {
@@ -194,5 +263,17 @@ export async function verifyToken(token: string, env: Env): Promise<number | nul
     }
     const userId = Number(payload.sub);
     if (!Number.isFinite(userId)) return null;
+
+    // Token-version check: each issued JWT carries the user's
+    // `token_version` at issuance. If the DB row has been bumped
+    // (e.g. by POST /auth/logout) this JWT is no longer valid.
+    const tv = typeof payload.tv === 'number' ? payload.tv : -1;
+    const row = await env.DB
+        .prepare('SELECT token_version FROM users WHERE id = ?')
+        .bind(userId)
+        .first<{ token_version: number }>();
+    if (!row) return null;
+    if (tv !== row.token_version) return null;
+
     return userId;
 }
