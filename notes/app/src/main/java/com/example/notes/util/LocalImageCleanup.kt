@@ -77,9 +77,13 @@ object LocalImageCleanup {
         // basename starts with `img_` — the new layout puts them in
         // the `images/` subfolder, the legacy layout puts them in the
         // root.
-        val files = (filesDir.listFiles { f ->
+        val legacyFiles = filesDir.listFiles { f ->
             f.isFile && f.name.startsWith("img_")
-        } ?: emptyArray())
+        } ?: emptyArray()
+        val newFiles = imagesDir.listFiles { f ->
+            f.isFile && f.name.startsWith("img_")
+        } ?: emptyArray()
+        val files = legacyFiles + newFiles
         if (files.isEmpty()) {
             Logger.d(TAG, "no img_* files to scan")
             return 0L
@@ -136,6 +140,28 @@ object LocalImageCleanup {
         legacyPrefix: String
     ) {
         if (content.isEmpty()) return
+        if (content.contains("file://")) {
+            val blocks = com.example.notes.ui.edit.parseBlocksFromContent(content)
+            for (block in blocks) {
+                if (block is com.example.notes.ui.edit.ContentBlock.ImageBlock) {
+                    val uri = block.uri
+                    when {
+                        uri.startsWith(newPrefix) -> {
+                            val name = uri.removePrefix(newPrefix).trimStart('/')
+                            if (name.isNotEmpty()) {
+                                out += File(File(filesDirPath, "images"), name).absolutePath
+                            }
+                        }
+                        uri.startsWith(legacyPrefix) -> {
+                            val name = uri.removePrefix(legacyPrefix).trimStart('/')
+                            if (name.isNotEmpty()) {
+                                out += File(filesDirPath, name).absolutePath
+                            }
+                        }
+                    }
+                }
+            }
+        }
         // Walk the content twice — once for each prefix. Doing it in a
         // single pass would require special-casing the `images/` slot
         // after `filesDir/`, which is harder to read and only marginally
@@ -152,7 +178,11 @@ object LocalImageCleanup {
                 ).let { if (it < 0) content.length else it }
                 val name = content.substring(pathStart, pathEnd)
                 if (name.isNotEmpty()) {
-                    out += "$filesDirPath/$name"
+                    if (prefix == newPrefix) {
+                        out += File(File(filesDirPath, "images"), name).absolutePath
+                    } else {
+                        out += File(filesDirPath, name).absolutePath
+                    }
                 }
                 from = pathEnd
             }

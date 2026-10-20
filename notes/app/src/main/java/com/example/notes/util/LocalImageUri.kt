@@ -98,7 +98,7 @@ object LocalImageUri {
      * image without revealing anything about the device.
      */
     fun toMarker(uri: String): String =
-        MARKER_PREFIX + uri.substringAfterLast('/')
+        MARKER_PREFIX + uri.substringAfterLast('/').substringAfterLast('\\')
 
     /**
      * Produce the copy of [content] that is safe to send to the

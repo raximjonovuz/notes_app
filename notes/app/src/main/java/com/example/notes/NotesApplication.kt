@@ -41,7 +41,7 @@ class NotesApplication : Application() {
      * [com.example.notes.util.SyncTrigger] for the design rationale
      * (debounce, single-flight guard, callbackFlow unregister).
      */
-    private val syncTrigger: com.example.notes.util.SyncTrigger by lazy {
+    internal val syncTrigger: com.example.notes.util.SyncTrigger by lazy {
         com.example.notes.util.SyncTrigger(
             applicationScope = applicationScope,
             syncRunner = object : com.example.notes.util.SyncTrigger.SyncRunner {

@@ -421,19 +421,22 @@ export async function deleteFile(path: string, userId: number, env: Env): Promis
 // --- A8 orphan cleanup --------------------------------------------------
 
 /**
- * A8: orphan-image cutoff. Rows whose `note_id` is NULL AND that are
- * older than this get reaped on the scheduled handler. We pick 7 days
- * to leave a long-enough window that a client can still attach an
- * image to a note after a slow / failed upload round-trip without
- * racing the cleanup.
+ * A8: orphan-image cutoff. Rows whose `note_id` is NULL, are not
+ * referenced in any active note's content, AND are older than this
+ * get reaped. Set to 30 days to leave ample headroom for offline /
+ * deferred image pushes.
  */
-const ORPHAN_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const ORPHAN_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**
  * A8: per-run cap. Keeps the cron trigger bounded even on a day when
  * thousands of orphans pile up; the next run will mop up the rest.
  */
 const MAX_ORPHAN_BATCH = 100;
+
+export interface OrphanCleanupOptions {
+    dryRun?: boolean;
+}
 
 export interface OrphanCleanupResult {
     scanned: number;
@@ -442,38 +445,27 @@ export interface OrphanCleanupResult {
 }
 
 /**
- * A8: orphan-image cleanup. Wired into the A6 scheduled handler in
- * `src/index.ts` alongside `runRetention`.
+ * A8: orphan-image cleanup.
  *
- * "Orphan" here means `note_id IS NULL AND created_at < cutoff`.
- * That covers the two paths we control:
- *   - Uploads that the client never bound to a note (note-creation
- *     failed, the editor was abandoned, etc.).
- *   - Uploads whose note was hard-deleted by A6 retention AFTER we
- *     already shipped this row (notes.ts does not currently NULL out
- *     `images.note_id` on hard-delete, and we don't touch notes.ts
- *     from A8; the scheduler does the best it can with the column
- *     state it sees).
+ * "Orphan" here means `note_id IS NULL AND created_at < cutoff` and
+ * no non-deleted note for the same user contains `r2_key` in its
+ * `content`.
  *
- * For each candidate we R2-delete first, then DB-delete. If R2 fails
- * we leave the row — the next cron tick retries. We don't try to be
- * clever about batching the R2 deletes, because `IMAGES.delete()`
- * is a single HTTP call to Cloudflare storage and one-at-a-time is
- * fast enough at MAX_ORPHAN_BATCH = 100.
- *
- * NOTE: this does NOT touch images whose `note_id` references a note
- * that has since been hard-deleted but whose `note_id` was never
- * cleared. That cleanup would require a `notes` join and lives in
- * a separate task — out of scope for A8 per the prompt's "don't
- * touch notes.ts" rule.
+ * When `options.dryRun` is true, no R2 blobs or D1 rows are deleted;
+ * the function only queries and returns the candidate counts.
  */
-export async function cleanupOrphanImages(env: Env): Promise<OrphanCleanupResult> {
+export async function cleanupOrphanImages(
+    env: Env,
+    options: OrphanCleanupOptions = {}
+): Promise<OrphanCleanupResult> {
+    const dryRun = options.dryRun === true;
     const cutoff = Date.now() - ORPHAN_AGE_MS;
 
     const orphans = await env.DB
         .prepare(
-            'SELECT id, r2_key FROM images ' +
-            'WHERE note_id IS NULL AND created_at < ? ' +
+            'SELECT i.id, i.r2_key FROM images i ' +
+            'WHERE i.note_id IS NULL AND i.created_at < ? ' +
+            'AND NOT EXISTS (SELECT 1 FROM notes n WHERE n.user_id = i.user_id AND n.deleted_at IS NULL AND INSTR(REPLACE(n.content, \'\\/\', \'/\'), i.r2_key) > 0) ' +
             'LIMIT ?'
         )
         .bind(cutoff, MAX_ORPHAN_BATCH)
@@ -481,26 +473,29 @@ export async function cleanupOrphanImages(env: Env): Promise<OrphanCleanupResult
     const rows = (orphans.results as Array<{ id: string; r2_key: string }>) || [];
 
     let deleted = 0;
-    for (const row of rows) {
-        try {
-            await env.IMAGES.delete(row.r2_key);
-        } catch {
-            // Skip this row; we'll retry on the next scheduled run.
-            continue;
+    if (!dryRun) {
+        for (const row of rows) {
+            try {
+                await env.IMAGES.delete(row.r2_key);
+            } catch {
+                // Skip this row; we'll retry on the next scheduled run.
+                continue;
+            }
+            // Re-check note_id IS NULL here so a concurrent write that
+            // bound the image to a note in the meantime is preserved.
+            await env.DB
+                .prepare('DELETE FROM images WHERE id = ? AND note_id IS NULL')
+                .bind(row.id)
+                .run();
+            deleted += 1;
         }
-        // Re-check note_id IS NULL here so a concurrent write that
-        // bound the image to a note in the meantime is preserved.
-        await env.DB
-            .prepare('DELETE FROM images WHERE id = ? AND note_id IS NULL')
-            .bind(row.id)
-            .run();
-        deleted += 1;
     }
 
     const remaining = (await env.DB
         .prepare(
-            'SELECT COUNT(*) AS cnt FROM images ' +
-            'WHERE note_id IS NULL AND created_at < ?'
+            'SELECT COUNT(*) AS cnt FROM images i ' +
+            'WHERE i.note_id IS NULL AND i.created_at < ? ' +
+            'AND NOT EXISTS (SELECT 1 FROM notes n WHERE n.user_id = i.user_id AND n.deleted_at IS NULL AND INSTR(REPLACE(n.content, \'\\/\', \'/\'), i.r2_key) > 0)'
         )
         .bind(cutoff)
         .first<{ cnt: number }>())?.cnt ?? 0;

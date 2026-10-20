@@ -8,9 +8,14 @@ import com.example.notes.data.local.AuthStore
 import com.example.notes.data.local.NoteDao
 import com.example.notes.data.local.NoteEntity
 import com.example.notes.data.local.SyncStore
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestDispatcher
+import kotlinx.coroutines.test.TestScope
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
@@ -38,12 +43,15 @@ import java.util.concurrent.atomic.AtomicLong
  * [ApiClient] — tombstone purge (B1), per-user cursor namespacing
  * (B6), and the locally-generated UUID carried by every push (B3).
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [30], application = com.example.notes.TestNotesApplication::class)
 class NotesSyncRepositorySyncTest {
 
     private lateinit var context: android.content.Context
     private lateinit var dao: FakeNoteDao
+    private lateinit var testDispatcher: TestDispatcher
+    private lateinit var testScope: TestScope
     private lateinit var repo: NotesSyncRepository
     private lateinit var server: MockWebServer
     private val originalToken = ApiClient.authToken
@@ -63,7 +71,14 @@ class NotesSyncRepositorySyncTest {
         // talk to MockWebServer.
         setNetworkOnline(true)
         dao = FakeNoteDao()
-        repo = NotesSyncRepository(noteDao = dao, context = context)
+        testDispatcher = StandardTestDispatcher()
+        testScope = TestScope(testDispatcher)
+        repo = NotesSyncRepository(
+            noteDao = dao,
+            context = context,
+            ioDispatcher = kotlinx.coroutines.Dispatchers.Unconfined,
+            pushScope = testScope
+        )
         // Sign in as user 3 for the B1/B3 tests; the B6 test signs in
         // as a second user on top of that.
         AuthStore.saveOrUpdate(
@@ -79,8 +94,8 @@ class NotesSyncRepositorySyncTest {
     @After
     fun tearDown() {
         // F-05 — cancel any debounced push this test scheduled so it
-        // can't fire (5 s later) against a LATER test's MockWebServer.
-        repo.cancelPendingPushForTesting()
+        // can't fire against a LATER test's MockWebServer.
+        testScope.cancel()
         AuthStore.clearAll(context)
         SyncStore.setLastCursor(context, userId = 3, cursor = 0L)
         SyncStore.setLastCursor(context, userId = 7, cursor = 0L)
@@ -701,6 +716,115 @@ class NotesSyncRepositorySyncTest {
     }
 
     /**
+     * F-05 — after a note with a local `file://` image is pushed with
+     * a `pending-image:<id>` marker (dirtyRevision == lastSyncedRevision),
+     * a subsequent pull that returns that note from the server (with the
+     * marker and updated server text) must preserve the local `file://`
+     * URI on the image block while taking the updated text from the server,
+     * and [com.example.notes.util.LocalImageCleanup] must NOT delete the
+     * referenced local file.
+     */
+    @Test
+    fun `F-05 pull preserves local file URI when server returns pending-image marker`() = runBlocking {
+        val imagesDir = java.io.File(context.filesDir, "images").apply { mkdirs() }
+        val localFile = java.io.File(imagesDir, "img_keep_after_pull.png")
+        localFile.writeBytes(byteArrayOf(1, 2, 3, 4))
+        try {
+            val localUri = "file://${context.filesDir.absolutePath}/images/img_keep_after_pull.png"
+            val localId = dao.insert(
+                NoteEntity(
+                    id = 94,
+                    title = "local title",
+                    content = noteContentWithImage(localUri, "local text"),
+                    userId = 3,
+                    serverId = "uuid-keep-local",
+                    dirtyRevision = 2,
+                    lastSyncedRevision = 1
+                )
+            )
+            burnRetryBudget(94L)
+            server.enqueue(upsertOk("uuid-keep-local", 50))
+
+            val pushed = repo.pushLocalChanges()
+            assertEquals("note must be pushed", 1, pushed)
+            server.takeRequest(2, TimeUnit.SECONDS)
+
+            val afterPush = dao.getRowById(localId)!!
+            assertEquals(
+                "precondition: dirtyRevision == lastSyncedRevision after push",
+                afterPush.dirtyRevision,
+                afterPush.lastSyncedRevision
+            )
+
+            // Server returns the note on pull with the pending-image marker
+            // and updated text from the server.
+            val serverContentWithMarker = noteContentWithImage(
+                "pending-image:img_keep_after_pull.png",
+                "server updated text"
+            )
+            val escapedServerContent = kotlinx.serialization.json.Json.encodeToString(
+                kotlinx.serialization.serializer<String>(),
+                serverContentWithMarker
+            )
+            server.enqueue(
+                MockResponse()
+                    .setResponseCode(200)
+                    .setHeader("Content-Type", "application/json")
+                    .setBody(
+                        """
+                        {
+                          "notes": [
+                            {
+                              "id": "uuid-keep-local",
+                              "title": "server title",
+                              "content": $escapedServerContent,
+                              "is_favorite": 0,
+                              "is_trashed": 0,
+                              "background_color": 0,
+                              "client_updated_at": 1700000005000,
+                              "created_at": 1700000000000,
+                              "change_id": 51
+                            }
+                          ],
+                          "sync_timestamp": 1700000006000,
+                          "sync_cursor": 51,
+                          "has_more": false
+                        }
+                        """.trimIndent()
+                    )
+            )
+
+            repo.syncIfOnline()
+            server.takeRequest(2, TimeUnit.SECONDS)
+
+            val afterPull = dao.getRowById(localId)!!
+            val blocks = com.example.notes.ui.edit.parseBlocksFromContent(afterPull.content)
+            val textBlock = blocks.filterIsInstance<com.example.notes.ui.edit.ContentBlock.TextBlock>().first()
+            val imgBlock = blocks.filterIsInstance<com.example.notes.ui.edit.ContentBlock.ImageBlock>().first()
+
+            assertEquals(
+                "text block must be updated from server",
+                "server updated text",
+                textBlock.text
+            )
+            assertEquals(
+                "image block must preserve local file:// URI instead of pending-image marker",
+                localUri,
+                imgBlock.uri
+            )
+
+            // Verify LocalImageCleanup does not delete the local file.
+            com.example.notes.util.LocalImageCleanup.runNow(context, dao)
+            assertTrue(
+                "LocalImageCleanup must keep the referenced local file on disk",
+                localFile.exists()
+            )
+        } finally {
+            localFile.delete()
+        }
+    }
+
+    /**
      * Build a note's content the way the editor does: a text block
      * plus an image block, serialized through the shared
      * `serializeBlocksToContent` (JSON v2). Using the real
@@ -865,6 +989,63 @@ class NotesSyncRepositorySyncTest {
         )
     }
 
+    /**
+     * B. 410 Gone resync: When server returns HTTP 410 on GET /notes?since=...
+     * (stale cursor), NotesSyncRepository.runPull drops/resets the user's sync
+     * cursor to 0 and performs a full pull from scratch, which succeeds.
+     */
+    @Test
+    fun `410 Gone resets cursor to 0 and re-pulls full list successfully`() = runBlocking {
+        // Pre-condition: user has an existing cursor from a previous sync.
+        SyncStore.setLastCursor(context, userId = 3, cursor = 42L)
+        assertEquals(42L, SyncStore.getLastCursor(context, userId = 3))
+
+        // First request receives 410 Gone (stale cursor).
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(410)
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"error":"Sync cursor expired"}""")
+        )
+
+        // Retry request receives full list (since=null).
+        server.enqueue(
+            listResponse(count = 3, syncCursor = 100L, hasMore = false)
+        )
+
+        val outcome = repo.syncIfOnline()
+        assertEquals(NotesSyncRepository.SyncOutcome.Success, outcome)
+
+        // Check requests sent to MockWebServer:
+        // 1st request had ?since=42
+        val r1 = server.takeRequest(2, TimeUnit.SECONDS)
+        assertNotNull(r1)
+        assertTrue("first request must have since=42", r1!!.path!!.contains("since=42"))
+
+        // 2nd request had no since param (full pull from scratch)
+        val r2 = server.takeRequest(2, TimeUnit.SECONDS)
+        assertNotNull(r2)
+        assertFalse("second request must NOT have since param", r2!!.path!!.contains("since="))
+
+        // Ingested 3 notes into DAO
+        val liveNotes = dao.allRows().filter { it.userId == 3 && it.deletedAt == null }
+        assertEquals(3, liveNotes.size)
+
+        // Cursor in SyncStore is updated to 100L
+        assertEquals(100L, SyncStore.getLastCursor(context, userId = 3))
+    }
+
+    @Test
+    fun `410 Gone second failure terminates pull with Failed outcome`() = runBlocking {
+        SyncStore.setLastCursor(context, userId = 3, cursor = 42L)
+
+        server.enqueue(MockResponse().setResponseCode(410).setBody("""{"error":"Gone"}"""))
+        server.enqueue(MockResponse().setResponseCode(410).setBody("""{"error":"Gone"}"""))
+
+        val outcome = repo.syncIfOnline()
+        assertTrue(outcome is NotesSyncRepository.SyncOutcome.Failed)
+    }
+
     // ---------- In-memory test double for NoteDao (B6-flavoured) ----------
 
     /**
@@ -962,8 +1143,8 @@ class NotesSyncRepositorySyncTest {
                     dirtyRevision = syncedRev,
                     serverChangeId = serverChangeId,
                     serverUpdatedAt = serverUpdatedAt,
-                    baseTitle = cur.title,
-                    baseContent = cur.content
+                    baseTitle = baseTitle,
+                    baseContent = baseContent
                 )
             }
         }

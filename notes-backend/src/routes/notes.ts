@@ -564,6 +564,24 @@ export async function upsertNote(request: Request, userId: number, env: Env): Pr
         .first<any>();
     if (!saved) return errorResponse('Failed to save note', 500);
 
+    // Bind any uploaded images belonging to this user whose r2_key is
+    // referenced in the note content so orphan cleanup knows they are in use.
+    if (content.length > 0) {
+        const normalized = content.replace(/\\\//g, '/');
+        const userImages = await env.DB
+            .prepare('SELECT r2_key, note_id FROM images WHERE user_id = ? AND (note_id IS NULL OR note_id != ?)')
+            .bind(userId, id)
+            .all<{ r2_key: string; note_id: string | null }>();
+        const toBind = ((userImages.results as Array<{ r2_key: string; note_id: string | null }>) || [])
+            .filter(img => img.r2_key && normalized.includes(img.r2_key));
+        for (const img of toBind) {
+            await env.DB
+                .prepare('UPDATE images SET note_id = ? WHERE user_id = ? AND r2_key = ?')
+                .bind(id, userId, img.r2_key)
+                .run();
+        }
+    }
+
     // A9: bump the per-user cache version. See deleteNote above.
     await invalidateUserCache(env, userId);
 

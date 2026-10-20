@@ -39,11 +39,20 @@ data class AuthUiState(
 )
 
 class AuthViewModel(
-    private val repository: AuthRepository
+    private val repository: AuthRepository,
+    private val onLoginSucceeded: () -> Unit = {}
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(initialState())
     val state: StateFlow<AuthUiState> = _state.asStateFlow()
+
+    /**
+     * Guards against duplicate concurrent [submitGoogle] network calls while
+     * allowing [beginGoogleAttempt] to set [AuthUiState.isGoogleLoading] = true
+     * during the Credential Manager sheet phase without blocking the subsequent
+     * [submitGoogle] invocation.
+     */
+    private var submitInFlight = false
 
     private fun initialState(): AuthUiState {
         val saved = repository.allSessions()
@@ -71,6 +80,9 @@ class AuthViewModel(
             savedAccounts = repository.allSessions()
         )
         onDone(active)
+        if (active != null) {
+            onLoginSucceeded()
+        }
     }
 
     fun removeAccount(email: String) {
@@ -98,27 +110,57 @@ class AuthViewModel(
      * (null) when the deployment hasn't enabled nonce validation yet,
      * so old clients keep working.
      */
-    fun submitGoogle(idToken: String, nonce: String? = null) {
+    fun submitGoogle(idToken: String, nonce: String? = _state.value.pendingNonce) {
+        if (submitInFlight) return
+        submitInFlight = true
         val s = _state.value
-        if (s.isGoogleLoading) return
         _state.value = s.copy(isGoogleLoading = true, errorMessage = null)
         viewModelScope.launch {
-            val result = repository.googleLogin(idToken, nonce)
+            try {
+                val result = repository.googleLogin(idToken, nonce)
+                result.onSuccess { session ->
+                    _state.value = _state.value.copy(
+                        isGoogleLoading = false,
+                        isAuthenticated = true,
+                        sessionEmail = session.email,
+                        savedAccounts = repository.allSessions(),
+                        activeEmail = session.email,
+                        pendingNonce = null
+                    )
+                    onLoginSucceeded()
+                }.onFailure { err ->
+                    _state.value = _state.value.copy(
+                        isGoogleLoading = false,
+                        errorMessage = err.localizedMessage ?: "Google sign-in failed.",
+                        pendingNonce = null
+                    )
+                }
+            } finally {
+                submitInFlight = false
+            }
+        }
+    }
+
+    /**
+     * Password-based login. Supported for backwards-compatibility and tests.
+     */
+    fun submitPassword(email: String, password: String, onDone: (Boolean) -> Unit = {}) {
+        viewModelScope.launch {
+            val result = repository.login(email, password)
             result.onSuccess { session ->
                 _state.value = _state.value.copy(
-                    isGoogleLoading = false,
                     isAuthenticated = true,
                     sessionEmail = session.email,
                     savedAccounts = repository.allSessions(),
-                    activeEmail = session.email,
-                    pendingNonce = null
+                    activeEmail = session.email
                 )
+                onLoginSucceeded()
+                onDone(true)
             }.onFailure { err ->
                 _state.value = _state.value.copy(
-                    isGoogleLoading = false,
-                    errorMessage = err.localizedMessage ?: "Google sign-in failed.",
-                    pendingNonce = null
+                    errorMessage = err.localizedMessage ?: "Login failed."
                 )
+                onDone(false)
             }
         }
     }
@@ -143,6 +185,7 @@ class AuthViewModel(
     }
 
     fun clearGoogleError() {
+        submitInFlight = false
         _state.value = _state.value.copy(errorMessage = null, isGoogleLoading = false, pendingNonce = null)
     }
 
@@ -151,6 +194,7 @@ class AuthViewModel(
      * Credential Manager flow (e.g. "No Google account on device").
      */
     fun setGoogleError(message: String) {
+        submitInFlight = false
         _state.value = _state.value.copy(
             errorMessage = message,
             isGoogleLoading = false,
@@ -195,12 +239,13 @@ class AuthViewModel(
         fun factory(application: Application): ViewModelProvider.Factory =
             viewModelFactory {
                 initializer {
-                    val app = application as NotesApplication
+                    val app = application as? NotesApplication
                     AuthViewModel(
-                        AuthRepository(
-                            context = app,
-                            onSessionChanged = { app.repository.refreshActiveUser() }
-                        )
+                        repository = AuthRepository(
+                            context = application,
+                            onSessionChanged = { app?.repository?.refreshActiveUser() }
+                        ),
+                        onLoginSucceeded = { app?.onLoginSucceeded() }
                     )
                 }
             }

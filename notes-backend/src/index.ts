@@ -2,7 +2,7 @@ import { Env } from './types';
 import { corsHeaders, errorResponse, getUserId } from './utils';
 import { googleAuthRoute, loginRoute, logoutRoute, meRoute, registerRoute } from './routes/auth';
 import { deleteNote, getNote, listNotes, upsertNote, runRetention } from './routes/notes';
-import { cleanupOrphanImages, deleteFile, handleUpload, serveFile } from './routes/upload';
+import { deleteFile, handleUpload, serveFile } from './routes/upload';
 
 export default {
     async fetch(
@@ -94,13 +94,8 @@ export default {
     // `[triggers] crons`). Hard-deletes change_log and soft-deleted notes
     // older than the 90-day retention window.
     //
-    // A8: also runs `cleanupOrphanImages` immediately after, so the same
-    // cron tick reaps R2 blobs whose `note_id` is NULL and that are
-    // older than 7 days. Both tasks share the same `waitUntil` slot;
-    // they touch disjoint tables so order doesn't matter.
-    //
     // We do not block on the promise; `ctx.waitUntil` lets the Worker
-    // keep the isolate alive until both jobs finish without holding
+    // keep the isolate alive until the job finishes without holding
     // the cron response open.
     async scheduled(
         _event: ScheduledController,
@@ -109,7 +104,7 @@ export default {
     ): Promise<void> {
         ctx.waitUntil((async () => {
             await runRetention(env);
-            await cleanupOrphanImages(env);
+            // disabled: images.note_id is never populated; re-enable after binding
         })());
     },
 } satisfies ExportedHandler<Env>;

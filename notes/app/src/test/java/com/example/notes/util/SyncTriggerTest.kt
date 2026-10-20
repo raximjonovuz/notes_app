@@ -112,6 +112,23 @@ class SyncTriggerTest {
         }
 
     /**
+     * F-14 — LoginSuccess trigger starts a sync pass.
+     */
+    @Test
+    fun `F-14 LoginSuccess trigger runs sync`() =
+        kotlinx.coroutines.runBlocking {
+            trigger.start(context)
+            kotlinx.coroutines.delay(100)
+
+            trigger.requestSync(SyncTrigger.TriggerReason.LoginSuccess)
+            assertTrue(
+                "LoginSuccess trigger must run the sync runner",
+                awaitUntil { runCount.get() == 1 }
+            )
+            assertEquals("LoginSuccess trigger must run exactly once", 1, runCount.get())
+        }
+
+    /**
      * F-04 — single-flight guard. While the first sync is still in
      * flight, a second trigger is a no-op.
      *

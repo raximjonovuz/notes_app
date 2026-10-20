@@ -154,14 +154,14 @@ fun LoginScreen(
                 GoogleIdTokenCredential.createFrom(credential.data)
             } catch (e: GoogleIdTokenParsingException) {
                 Logger.w("LoginScreen", "GoogleIdToken parse failed", e)
-                viewModel.clearGoogleError()
+                viewModel.setGoogleError("Invalid Google token received.")
                 return
             }
             val idToken = googleId.idToken
             // C4 — log only the *length* of the token, never the token
             // itself (or any prefix).
             Logger.d("LoginScreen", "GoogleSignIn idToken length=${idToken.length}")
-            viewModel.submitGoogle(idToken)
+            viewModel.submitGoogle(idToken, rawNonce)
         } catch (e: GetCredentialCancellationException) {
             // User closed the bottom-sheet — treat as a no-op, not an error.
             Logger.d("LoginScreen", "Credential picker cancelled by user")

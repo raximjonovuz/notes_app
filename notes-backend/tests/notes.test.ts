@@ -26,7 +26,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { deleteNote, listNotes, upsertNote, validateNoteBody } from '../src/routes/notes';
-import { detectImageType } from '../src/routes/upload';
+import { cleanupOrphanImages, detectImageType } from '../src/routes/upload';
 import { loginRoute, registerRoute } from '../src/routes/auth';
 import { Env } from '../src/types';
 
@@ -38,37 +38,46 @@ type Row = Record<string, any>;
 
 interface WhereClause {
     col: string;
-    op: '=' | '<>' | '>' | '<' | '>=' | '<=' | 'IS' | 'IS NOT' | 'LIKE';
+    op: '=' | '<>' | '>' | '<' | '>=' | '<=' | 'IS' | 'IS NOT' | 'LIKE' | 'IS NULL' | 'IS NOT NULL';
     idx: number;
 }
 
 function parseWhere(where: string): WhereClause[] {
+    let paramIdx = 0;
     return where
         .split(/\s+AND\s+/i)
         .map(s => s.trim())
         .filter(Boolean)
-        .map((c, i) => {
+        .map((c) => {
+            const nullM = c.match(/^([a-zA-Z_][a-zA-Z0-9_.]*)\s+IS\s+(NOT\s+)?NULL$/i);
+            if (nullM) {
+                const col = nullM[1].includes('.') ? nullM[1].split('.')[1] : nullM[1];
+                return { col, op: (nullM[2] ? 'IS NOT NULL' : 'IS NULL') as WhereClause['op'], idx: -1 };
+            }
             const m = c.match(/^([a-zA-Z_][a-zA-Z0-9_.]*)\s+(=|IS\s+NOT|<>|>=|<=|>|<|IS|LIKE)\s+\?$/i);
             if (!m) throw new Error(`MockD1: unsupported WHERE clause: ${c}`);
+            const col = m[1].includes('.') ? m[1].split('.')[1] : m[1];
             const op = m[2].replace(/\s+/g, ' ').toUpperCase();
-            return { col: m[1], op: op as WhereClause['op'], idx: i };
+            return { col, op: op as WhereClause['op'], idx: paramIdx++ };
         });
 }
 
 function matchClauses(row: Row, clauses: WhereClause[], params: any[]): boolean {
     for (const c of clauses) {
         const actual = row[c.col];
-        const val = params[c.idx];
+        const val = c.idx >= 0 ? params[c.idx] : undefined;
         switch (c.op) {
-            case '=':      if (actual !== val) return false; break;
-            case '<>':     if (actual === val) return false; break;
-            case '>':      if (!(actual > val)) return false; break;
-            case '<':      if (!(actual < val)) return false; break;
-            case '>=':     if (!(actual >= val)) return false; break;
-            case '<=':     if (!(actual <= val)) return false; break;
-            case 'IS':     if (actual !== val) return false; break;
-            case 'IS NOT': if (actual === val) return false; break;
-            case 'LIKE':   if (!String(actual ?? '').includes(String(val).replace(/%/g, ''))) return false; break;
+            case '=':           if (actual !== val) return false; break;
+            case '<>':          if (actual === val) return false; break;
+            case '>':           if (!(actual > val)) return false; break;
+            case '<':           if (!(actual < val)) return false; break;
+            case '>=':          if (!(actual >= val)) return false; break;
+            case '<=':          if (!(actual <= val)) return false; break;
+            case 'IS':          if (actual !== val) return false; break;
+            case 'IS NOT':      if (actual === val) return false; break;
+            case 'IS NULL':     if (actual !== null && actual !== undefined) return false; break;
+            case 'IS NOT NULL': if (actual === null || actual === undefined) return false; break;
+            case 'LIKE':        if (!String(actual ?? '').includes(String(val).replace(/%/g, ''))) return false; break;
         }
     }
     return true;
@@ -131,8 +140,9 @@ class MockD1 {
         return Array.from(this.tables[table].values());
     }
 
-    private insertRow(table: string, row: Row): number {
-        const id = this.nextRowId++;
+    private insertRow(table: string, row: Row): any {
+        const providedId = row.id;
+        const id = providedId !== undefined ? providedId : this.nextRowId++;
         const withId = { ...row, id };
         this.tables[table].set(id, withId);
         return id;
@@ -159,6 +169,42 @@ class MockD1 {
             return noteRows
                 .map(n => ({ ...n, log_change_id: agg.get(n.id) ?? 0 }))
                 .sort((a, b) => a.log_change_id - b.log_change_id);
+        }
+
+        // SELECT r2_key, note_id FROM images WHERE user_id = ? AND (note_id IS NULL OR note_id != ?)
+        const bindCandidatesM = s.match(/^SELECT\s+r2_key,\s*note_id\s+FROM\s+images\s+WHERE\s+user_id\s*=\s*\?\s+AND\s+\(\s*note_id\s+IS\s+NULL\s+OR\s+note_id\s*!=\s*\?\s*\)$/i);
+        if (bindCandidatesM) {
+            const userId = params[0];
+            const noteId = params[1];
+            return this.allRows('images')
+                .filter(i => i.user_id === userId && (i.note_id === null || i.note_id === undefined || i.note_id !== noteId))
+                .map(i => ({ r2_key: i.r2_key, note_id: i.note_id ?? null }));
+        }
+
+        // Orphan images SELECT / COUNT with NOT EXISTS (SELECT 1 FROM notes n WHERE n.user_id = i.user_id AND n.deleted_at IS NULL AND INSTR(REPLACE(n.content, '\/', '/'), i.r2_key) > 0)
+        const orphanM = s.match(/^SELECT\s+(i\.id,\s*i\.r2_key|COUNT\(\*\)\s+AS\s+cnt)\s+FROM\s+images\s+i\s+WHERE\s+i\.note_id\s+IS\s+NULL\s+AND\s+i\.created_at\s*<\s*\?\s+AND\s+NOT\s+EXISTS\s*\(\s*SELECT\s+1\s+FROM\s+notes\s+n\s+WHERE\s+n\.user_id\s*=\s*i\.user_id\s+AND\s+n\.deleted_at\s+IS\s+NULL\s+AND\s+INSTR\((?:n\.content|REPLACE\(n\.content,\s*'\\\/',\s*'\/'\)),\s*i\.r2_key\)\s*>\s*0\s*\)(?:\s+LIMIT\s+\?)?$/i);
+        if (orphanM) {
+            const cutoff = params[0];
+            const limit = params[1];
+            const notes = this.allRows('notes');
+            const matched = this.allRows('images').filter(i => {
+                if (i.note_id !== null && i.note_id !== undefined) return false;
+                if (!(i.created_at < cutoff)) return false;
+                const usedInActiveNote = notes.some(n =>
+                    n.user_id === i.user_id &&
+                    (n.deleted_at === null || n.deleted_at === undefined) &&
+                    typeof n.content === 'string' &&
+                    typeof i.r2_key === 'string' &&
+                    i.r2_key.length > 0 &&
+                    n.content.replace(/\\\//g, '/').includes(i.r2_key)
+                );
+                return !usedInActiveNote;
+            });
+            if (/^COUNT/i.test(orphanM[1])) {
+                return [{ cnt: matched.length }];
+            }
+            const sliced = typeof limit === 'number' ? matched.slice(0, limit) : matched;
+            return sliced.map(i => ({ id: i.id, r2_key: i.r2_key }));
         }
 
         // SELECT MAX(id) FROM <table> WHERE ...
@@ -293,13 +339,19 @@ class MockD1 {
         if (m) {
             const table = m[1];
             const cols = m[2].split(',').map(c => c.trim());
-            const placeholders = m[3].split(',').length;
+            const placeholders = m[3].split(',').map(p => p.trim());
             const conflictCol = m[4].trim();
             const setPart = m[5];
             const where = m[6];
-            const insertParams = params.slice(0, placeholders);
             const insertRow: Row = {};
-            cols.forEach((c, i) => { insertRow[c] = insertParams[i]; });
+            let pi = 0;
+            cols.forEach((c, i) => {
+                const ph = placeholders[i];
+                if (ph === '?') { insertRow[c] = params[pi++]; }
+                else if (/^-?\d+(\.\d+)?$/.test(ph)) { insertRow[c] = Number(ph); }
+                else if (ph === 'NULL') { insertRow[c] = null; }
+                else throw new Error(`MockD1: unsupported placeholder: ${ph}`);
+            });
             const existing = this.allRows(table).find(r => r[conflictCol] === insertRow[conflictCol]);
             if (!existing) {
                 this.insertRow(table, insertRow);
@@ -309,7 +361,6 @@ class MockD1 {
             const whereResolved = where.replace(/excluded\.([a-zA-Z_]+)/g, (_, col) => String(insertRow[col] ?? ''));
             // Count SET placeholders to slice the bound params correctly.
             const setClauses = splitTopLevel(setPart);
-            let pi = placeholders;
             let consumedForWhere: any[] = [];
             const setValues: Array<{ col: string; value: any }> = [];
             for (const sc of setClauses) {
@@ -699,16 +750,229 @@ describe('detectImageType (A10 / A8)', () => {
 });
 
 /* ------------------------------------------------------------------ *
- * TODO — additional A10 scenarios not covered above.
+ * 9. Safe orphan image cleanup & note_id binding on upsertNote.
  * ------------------------------------------------------------------ */
 
-// TODO: since duplicate — extend MockD1.select to fully verify that two
-//       change_log rows for the same note collapse to one returned note
-//       (current implementation returns the joined rows but the dedup
-//       assertion is not exercised).
+describe('cleanupOrphanImages & upsertNote image binding', () => {
+    const DAY_MS = 24 * 60 * 60 * 1000;
 
-// TODO: rate-limit boundary across minute rollover — requires mocking
-//       Date.now() inside rate_limit.ts.
+    it('(a) keeps a 40-day-old image that is used in an active note (via upsertNote binding and via content INSTR)', async () => {
+        const db = new MockD1();
+        const r2 = new MockR2();
+        const r2KeyBound = 'uploads/1/img-bound/photo1.png';
+        const r2KeyUnboundInContent = 'uploads/1/img-legacy/photo2.png';
+        const fortyDaysAgo = Date.now() - 40 * DAY_MS;
 
-// TODO: full /upload round-trip with base64-encoded PNG and SVG bytes,
-//       wiring IMAGES.put to assert contentType.
+        await r2.put(r2KeyBound, 'bytes-1');
+        await r2.put(r2KeyUnboundInContent, 'bytes-2');
+
+        db.seed('images', {
+            id: 'img-bound',
+            user_id: 1,
+            r2_key: r2KeyBound,
+            note_id: null,
+            content_type: 'image/png',
+            size_bytes: 7,
+            created_at: fortyDaysAgo,
+        });
+        db.seed('images', {
+            id: 'img-legacy',
+            user_id: 1,
+            r2_key: r2KeyUnboundInContent,
+            note_id: null,
+            content_type: 'image/png',
+            size_bytes: 7,
+            created_at: fortyDaysAgo,
+        });
+
+        // Legacy note seeded directly (img-legacy still has note_id = null, protected by NOT EXISTS + INSTR).
+        db.seed('notes', {
+            id: UUID_B,
+            user_id: 1,
+            title: 'legacy note',
+            content: `text before https://example.com/files/${r2KeyUnboundInContent} text after`,
+            created_at: fortyDaysAgo,
+            updated_at: fortyDaysAgo,
+            client_updated_at: fortyDaysAgo,
+            client_created_at: fortyDaysAgo,
+            change_id: 1,
+            deleted_at: null,
+            is_favorite: 0,
+            is_trashed: 0,
+            background_color: 0,
+        });
+
+        const env = makeEnv({ db, r2 });
+
+        // Upsert note A referencing r2KeyBound -> binds images.note_id = UUID_A.
+        const req = jsonRequest('https://example.com/notes', {
+            id: UUID_A,
+            title: 'note with image',
+            content: `IMAGE|https://example.com/files/${r2KeyBound}`,
+            updated_at: Date.now(),
+        });
+        const upsertResp = await upsertNote(req, 1, env);
+        expect(upsertResp.status).toBe(200);
+
+        const boundRow = Array.from(db.tables.images.values()).find(r => r.id === 'img-bound');
+        expect(boundRow?.note_id).toBe(UUID_A);
+
+        const res = await cleanupOrphanImages(env);
+        expect(res.deleted).toBe(0);
+        expect(r2.store.has(r2KeyBound)).toBe(true);
+        expect(r2.store.has(r2KeyUnboundInContent)).toBe(true);
+        expect(db.tables.images.size).toBe(2);
+    });
+
+    it('(b) deletes a 40-day-old image that is not referenced in any active note', async () => {
+        const db = new MockD1();
+        const r2 = new MockR2();
+        const r2Key = 'uploads/1/img-orphan-40d/old.png';
+        const fortyDaysAgo = Date.now() - 40 * DAY_MS;
+
+        await r2.put(r2Key, 'orphan-bytes');
+        db.seed('images', {
+            id: 'img-orphan-40d',
+            user_id: 1,
+            r2_key: r2Key,
+            note_id: null,
+            content_type: 'image/png',
+            size_bytes: 12,
+            created_at: fortyDaysAgo,
+        });
+
+        const env = makeEnv({ db, r2 });
+        const res = await cleanupOrphanImages(env);
+
+        expect(res.scanned).toBe(1);
+        expect(res.deleted).toBe(1);
+        expect(res.remaining).toBe(0);
+        expect(r2.store.has(r2Key)).toBe(false);
+        expect(db.tables.images.size).toBe(0);
+    });
+
+    it('(c) keeps a 10-day-old unused image (under 30-day threshold)', async () => {
+        const db = new MockD1();
+        const r2 = new MockR2();
+        const r2Key = 'uploads/1/img-recent-10d/recent.png';
+        const tenDaysAgo = Date.now() - 10 * DAY_MS;
+
+        await r2.put(r2Key, 'recent-bytes');
+        db.seed('images', {
+            id: 'img-recent-10d',
+            user_id: 1,
+            r2_key: r2Key,
+            note_id: null,
+            content_type: 'image/png',
+            size_bytes: 12,
+            created_at: tenDaysAgo,
+        });
+
+        const env = makeEnv({ db, r2 });
+        const res = await cleanupOrphanImages(env);
+
+        expect(res.scanned).toBe(0);
+        expect(res.deleted).toBe(0);
+        expect(res.remaining).toBe(0);
+        expect(r2.store.has(r2Key)).toBe(true);
+        expect(db.tables.images.size).toBe(1);
+    });
+
+    it('(d) dryRun mode reports candidate counts without deleting from R2 or D1', async () => {
+        const db = new MockD1();
+        const r2 = new MockR2();
+        const r2Key = 'uploads/1/img-dryrun-40d/orphan.png';
+        const fortyDaysAgo = Date.now() - 40 * DAY_MS;
+
+        await r2.put(r2Key, 'dryrun-bytes');
+        db.seed('images', {
+            id: 'img-dryrun-40d',
+            user_id: 1,
+            r2_key: r2Key,
+            note_id: null,
+            content_type: 'image/png',
+            size_bytes: 12,
+            created_at: fortyDaysAgo,
+        });
+
+        const env = makeEnv({ db, r2 });
+        const res = await cleanupOrphanImages(env, { dryRun: true });
+
+        expect(res.scanned).toBe(1);
+        expect(res.deleted).toBe(0);
+        expect(res.remaining).toBe(1);
+        expect(r2.store.has(r2Key)).toBe(true);
+        expect(db.tables.images.size).toBe(1);
+    });
+
+    it('(e) handles JSON-escaped slashes (https:\\/\\/host\\/files\\/uploads\\/12\\/abc\\/t.jpg) in upsertNote binding and cleanupOrphanImages', async () => {
+        const db = new MockD1();
+        const r2 = new MockR2();
+        const r2KeyUpsert = 'uploads/12/abc/t.jpg';
+        const r2KeyUnbound = 'uploads/12/def/u.jpg';
+        const fortyDaysAgo = Date.now() - 40 * DAY_MS;
+
+        await r2.put(r2KeyUpsert, 'escaped-1');
+        await r2.put(r2KeyUnbound, 'escaped-2');
+
+        db.seed('images', {
+            id: 'img-esc-1',
+            user_id: 12,
+            r2_key: r2KeyUpsert,
+            note_id: null,
+            content_type: 'image/jpeg',
+            size_bytes: 9,
+            created_at: fortyDaysAgo,
+        });
+        db.seed('images', {
+            id: 'img-esc-2',
+            user_id: 12,
+            r2_key: r2KeyUnbound,
+            note_id: null,
+            content_type: 'image/jpeg',
+            size_bytes: 9,
+            created_at: fortyDaysAgo,
+        });
+
+        // Existing note in DB with org.json escaped slashes (\/) where note_id is still NULL.
+        db.seed('notes', {
+            id: UUID_B,
+            user_id: 12,
+            title: 'escaped existing',
+            content: '{"v":2,"blocks":[{"type":"image","uri":"https:\\/\\/host\\/files\\/uploads\\/12\\/def\\/u.jpg"}]}',
+            created_at: fortyDaysAgo,
+            updated_at: fortyDaysAgo,
+            client_updated_at: fortyDaysAgo,
+            client_created_at: fortyDaysAgo,
+            change_id: 1,
+            deleted_at: null,
+            is_favorite: 0,
+            is_trashed: 0,
+            background_color: 0,
+        });
+
+        const env = makeEnv({ db, r2 });
+
+        // Upsert note with org.json escaped slashes (\/) -> must bind img-esc-1.note_id = UUID_A.
+        const req = jsonRequest('https://example.com/notes', {
+            id: UUID_A,
+            title: 'escaped upsert',
+            content: '{"v":2,"blocks":[{"type":"image","uri":"https:\\/\\/host\\/files\\/uploads\\/12\\/abc\\/t.jpg"}]}',
+            updated_at: Date.now(),
+        });
+        const upsertResp = await upsertNote(req, 12, env);
+        expect(upsertResp.status).toBe(200);
+
+        const boundRow = Array.from(db.tables.images.values()).find(r => r.id === 'img-esc-1');
+        expect(boundRow?.note_id).toBe(UUID_A);
+
+        // cleanupOrphanImages must also protect img-esc-2 (still note_id = null, matched via REPLACE(n.content, '\/', '/')).
+        const res = await cleanupOrphanImages(env);
+        expect(res.scanned).toBe(0);
+        expect(res.deleted).toBe(0);
+        expect(res.remaining).toBe(0);
+        expect(r2.store.has(r2KeyUpsert)).toBe(true);
+        expect(r2.store.has(r2KeyUnbound)).toBe(true);
+        expect(db.tables.images.size).toBe(2);
+    });
+});

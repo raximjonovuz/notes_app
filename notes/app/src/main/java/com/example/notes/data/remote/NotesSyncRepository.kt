@@ -8,6 +8,7 @@ import com.example.notes.data.local.NoteDao
 import com.example.notes.data.local.NoteEntity
 import com.example.notes.data.local.SyncStore
 import com.example.notes.util.Logger
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -17,6 +18,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicReference
+import kotlin.coroutines.coroutineContext
 
 /**
  * V5.3 — bidirectional sync between local Room and the V5.3 backend.
@@ -69,7 +72,9 @@ import kotlinx.coroutines.withContext
  */
 class NotesSyncRepository(
     private val noteDao: NoteDao,
-    private val context: Context
+    private val context: Context,
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val pushScope: CoroutineScope = CoroutineScope(SupervisorJob() + ioDispatcher)
 ) {
 
     private val tag = "NotesSyncRepository"
@@ -135,7 +140,15 @@ class NotesSyncRepository(
         // the migration yet) the old URI must still defer the push;
         // otherwise the editor would push a `file://…/img_X.png` URI
         // to the server before the R2 upload finishes.
-        return content.contains(legacyLocalFileUriPrefix + "img_")
+        if (content.contains(legacyLocalFileUriPrefix + "img_")) return true
+        if (content.contains("file://")) {
+            val blocks = com.example.notes.ui.edit.parseBlocksFromContent(content)
+            return blocks.any { block ->
+                block is com.example.notes.ui.edit.ContentBlock.ImageBlock &&
+                    com.example.notes.util.LocalImageUri.isLocalImageUri(block.uri, context)
+            }
+        }
+        return false
     }
 
     /**
@@ -191,7 +204,7 @@ class NotesSyncRepository(
      * the *next* round-trip, with the user's local edits momentarily
      * overwriting the server's before being clobbered back.
      */
-    suspend fun syncIfOnline(): SyncOutcome = withContext(Dispatchers.IO) {
+    suspend fun syncIfOnline(): SyncOutcome = withContext(ioDispatcher) {
         if (!isOnline()) {
             Logger.d(tag, "syncIfOnline: device offline, skipping")
             return@withContext SyncOutcome.Skipped
@@ -241,22 +254,41 @@ class NotesSyncRepository(
      * persisted cursor means the next pull picks up where we left
      * off, so a 1 GB DB doesn't take a single sync to ingest.
      *
-     * 410 Gone is left as [SyncOutcome.Failed] for now; C-2 will
-     * turn it into an explicit "drop the cursor and resync from
-     * scratch" path.
+     * C-2 — 410 Gone means the server-side change_log for this cursor
+     * has been pruned by retention (or the cursor is otherwise stale).
+     * We drop the cursor back to 0 and re-pull from scratch. A second
+     * 410 within the same pass is treated as a hard failure to avoid
+     * looping.
      */
     private suspend fun runPull(userId: Int): SyncOutcome {
-        val initialCursor = SyncStore.getLastCursor(context, userId)
+        val initialCursor = SyncStore.getLastCursor(context, userId)?.takeIf { it > 0 }
         var cursor: Long? = initialCursor
         var pagesProcessed = 0
         var notesIngested = 0
+        var hasReset410 = false
 
         while (true) {
             // Server's `since` parameter expects Long?. The DAO helper
             // returns Long? (null = never synced); the API takes the
             // same shape via the listNotes(since: Long?) overload.
-            val response = ApiClient.listNotes(cursor).getOrElse { err ->
+            val listResult = ApiClient.listNotes(cursor)
+            val response = if (listResult.isFailure) {
+                val err = listResult.exceptionOrNull()!!
+                val msg = err.message.orEmpty()
+                if (msg.contains("HTTP 410") && !hasReset410) {
+                    Logger.w(
+                        tag,
+                        "pullRemoteChanges: 410 Gone for cursor=$cursor; " +
+                            "resetting cursor to 0 and re-pulling from scratch"
+                    )
+                    hasReset410 = true
+                    SyncStore.setLastCursor(context, userId, 0L)
+                    cursor = null
+                    continue
+                }
                 return classifyHttpError(err, "pullRemoteChanges")
+            } else {
+                listResult.getOrThrow()
             }
 
             try {
@@ -391,10 +423,11 @@ class NotesSyncRepository(
         if (local != null) {
             // Case 1: clean local copy, take server's truth.
             if (local.dirtyRevision <= local.lastSyncedRevision) {
+                val mergedContent = preserveLocalImagesForMarkers(local.content, note.content)
                 noteDao.updateNote(
                     local.copy(
                         title = note.title,
-                        content = note.content,
+                        content = mergedContent,
                         isFavorite = note.is_favorite != 0,
                         isTrashed = note.is_trashed != 0,
                         backgroundColor = note.background_color,
@@ -427,6 +460,52 @@ class NotesSyncRepository(
             )
         )
         Logger.d(tag, "mergeServerNote: inserted new serverId=${note.id}")
+    }
+
+    /**
+     * F-05 — when [serverContent] contains a `pending-image:<basename>`
+     * marker and [localContent] still holds a matching local `file://`
+     * image block, restore the local `file://` URI on that image block
+     * while keeping all text and non-marker blocks from [serverContent].
+     */
+    private fun preserveLocalImagesForMarkers(
+        localContent: String,
+        serverContent: String
+    ): String {
+        if (!serverContent.contains(com.example.notes.util.LocalImageUri.MARKER_PREFIX) ||
+            !hasLocalImageUri(localContent)
+        ) {
+            return serverContent
+        }
+        val localBlocks = com.example.notes.ui.edit.parseBlocksFromContent(localContent)
+        val localUriByMarker = HashMap<String, String>()
+        for (block in localBlocks) {
+            if (block is com.example.notes.ui.edit.ContentBlock.ImageBlock &&
+                com.example.notes.util.LocalImageUri.isLocalImageUri(block.uri, context)
+            ) {
+                localUriByMarker[com.example.notes.util.LocalImageUri.toMarker(block.uri)] = block.uri
+            }
+        }
+        if (localUriByMarker.isEmpty()) return serverContent
+
+        val serverBlocks = com.example.notes.ui.edit.parseBlocksFromContent(serverContent)
+        var mutated = false
+        val restored = serverBlocks.map { block ->
+            if (block is com.example.notes.ui.edit.ContentBlock.ImageBlock &&
+                com.example.notes.util.LocalImageUri.isMarker(block.uri)
+            ) {
+                val localUri = localUriByMarker[block.uri]
+                if (localUri != null) {
+                    mutated = true
+                    block.copy(uri = localUri)
+                } else block
+            } else block
+        }
+        return if (mutated) {
+            com.example.notes.ui.edit.serializeBlocksToContent(restored)
+        } else {
+            serverContent
+        }
     }
 
     /**
@@ -489,7 +568,10 @@ class NotesSyncRepository(
             )
         }
 
-        val baseEqualLocal = baseTitle == local.title && baseContent == local.content
+        val sanitizedLocalContent = com.example.notes.util.LocalImageUri
+            .sanitizeForWire(local.content, context)
+        val baseEqualLocal = baseTitle == local.title &&
+            (baseContent == local.content || baseContent == sanitizedLocalContent)
         val baseEqualServer = baseTitle == server.title && baseContent == server.content
         when {
             baseEqualLocal -> {
@@ -497,7 +579,7 @@ class NotesSyncRepository(
                 // new truth.
                 return local.copy(
                     title = server.title,
-                    content = server.content,
+                    content = preserveLocalImagesForMarkers(local.content, server.content),
                     isFavorite = server.is_favorite != 0,
                     isTrashed = server.is_trashed != 0,
                     backgroundColor = server.background_color,
@@ -525,7 +607,8 @@ class NotesSyncRepository(
             else -> {
                 // Both diverged from the common ancestor. Cheap
                 // line-based auto-merge.
-                val mergedContent = lineUnion(baseContent, local.content, server.content)
+                val mergedContent = lineUnion(baseContent, sanitizedLocalContent, server.content)
+                    ?.let { preserveLocalImagesForMarkers(local.content, it) }
                 val mergedTitle = if (local.title == baseTitle) server.title
                                   else if (server.title == baseTitle) local.title
                                   else local.title + " / " + server.title
@@ -704,11 +787,10 @@ class NotesSyncRepository(
         }
     }
 
-    private val pushScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private var pendingPushJob: Job? = null
+    private val pendingPushJob = AtomicReference<Job?>(null)
 
     /** Drain the local push queue. Public for the worker. */
-    suspend fun pushLocalChanges(): Int = withContext(Dispatchers.IO) {
+    suspend fun pushLocalChanges(): Int = withContext(ioDispatcher) {
         val userId = currentUserId()
         if (userId <= 0) return@withContext 0
         syncMutex.withLock { pushLocalChangesInternal(userId) }
@@ -724,16 +806,14 @@ class NotesSyncRepository(
     fun pushLocalChangesDebounced() {
         val userId = currentUserId()
         if (userId <= 0) return
-        synchronized(this) {
-            pendingPushJob?.cancel()
-            SyncStore.bumpPendingFlush(context, userId)
-            pendingPushJob = pushScope.launch {
-                delay(PUSH_DEBOUNCE_MS)
-                syncMutex.withLock {
-                    pushLocalChangesInternal(userId)
-                }
+        SyncStore.bumpPendingFlush(context, userId)
+        val newJob = pushScope.launch {
+            delay(PUSH_DEBOUNCE_MS)
+            syncMutex.withLock {
+                pushLocalChangesInternal(userId)
             }
         }
+        pendingPushJob.getAndSet(newJob)?.cancel()
     }
 
     /**
@@ -743,48 +823,31 @@ class NotesSyncRepository(
      * eventually synced. Keeps `pendingFlush` version alive so
      * [coldStartFlushIfNeeded] also picks it up across process death.
      */
-    private fun schedulePendingImagePush(userId: Int) {
-        synchronized(this) {
-            pendingPushJob?.cancel()
-            SyncStore.bumpPendingFlush(context, userId)
-            pendingPushJob = pushScope.launch {
-                delay(PUSH_DEBOUNCE_MS)
-                syncMutex.withLock {
-                    pushLocalChangesInternal(userId)
-                }
+    private suspend fun schedulePendingImagePush(userId: Int) {
+        val currentJob = coroutineContext[Job]
+        SyncStore.bumpPendingFlush(context, userId)
+        val newJob = pushScope.launch {
+            delay(PUSH_DEBOUNCE_MS)
+            syncMutex.withLock {
+                pushLocalChangesInternal(userId)
             }
+        }
+        val prev = pendingPushJob.getAndSet(newJob)
+        if (prev != null && prev !== currentJob) {
+            prev.cancel()
         }
     }
 
     /** Flush the debounced push immediately, used by sync button + worker. */
-    suspend fun flushPendingPush(): Int = withContext(Dispatchers.IO) {
+    suspend fun flushPendingPush(): Int = withContext(ioDispatcher) {
         val userId = currentUserId()
         if (userId <= 0) return@withContext 0
-        synchronized(this@NotesSyncRepository) {
-            pendingPushJob?.cancel()
-            pendingPushJob = null
+        val currentJob = coroutineContext[Job]
+        val prev = pendingPushJob.getAndSet(null)
+        if (prev != null && prev !== currentJob) {
+            prev.cancel()
         }
         syncMutex.withLock { pushLocalChangesInternal(userId) }
-    }
-
-    /**
-     * Test-only — cancel the pending debounced push WITHOUT running
-     * it.
-     *
-     * [schedulePendingImagePush] schedules a retry on [pushScope],
-     * which is a per-instance scope that is never cancelled. In
-     * production that's correct (the scope lives as long as the
-     * process). In the unit tests, however, a scheduled retry from
-     * one test can fire several seconds later — against a LATER
-     * test's MockWebServer, because [ApiClient.BASE_URL] is a
-     * process-wide static. The test tear-down calls this so a
-     * scheduled retry can't leak across test cases.
-     */
-    internal fun cancelPendingPushForTesting() {
-        synchronized(this) {
-            pendingPushJob?.cancel()
-            pendingPushJob = null
-        }
     }
 
     /**
@@ -1056,7 +1119,7 @@ class NotesSyncRepository(
         }
     }
 
-    suspend fun deleteOnServer(serverId: String): Boolean = withContext(Dispatchers.IO) {
+    suspend fun deleteOnServer(serverId: String): Boolean = withContext(ioDispatcher) {
         if (!isOnline()) {
             Logger.d(tag, "deleteOnServer: offline, skipping")
             return@withContext false
