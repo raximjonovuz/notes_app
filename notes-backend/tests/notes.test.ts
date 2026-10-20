@@ -976,3 +976,58 @@ describe('cleanupOrphanImages & upsertNote image binding', () => {
         expect(db.tables.images.size).toBe(2);
     });
 });
+
+/* ------------------------------------------------------------------ *
+ * validateNoteBody without Buffer (Cloudflare Workers runtime).
+ * ------------------------------------------------------------------ */
+
+describe('validateNoteBody without Buffer (Cloudflare Workers environment)', () => {
+    it('validates note body when globalThis.Buffer is undefined', () => {
+        const origBuffer = (globalThis as any).Buffer;
+        let validResult: ReturnType<typeof validateNoteBody> | undefined;
+        let overflowResult: ReturnType<typeof validateNoteBody> | undefined;
+        let euroOverflowResult: ReturnType<typeof validateNoteBody> | undefined;
+        let exactlyLimitResult: ReturnType<typeof validateNoteBody> | undefined;
+
+        try {
+            (globalThis as any).Buffer = undefined;
+            validResult = validateNoteBody({
+                title: 'Test Title',
+                content: 'Hello, world! 🇺🇿',
+                background_color: 3,
+                updated_at: 1700000000000,
+            });
+            overflowResult = validateNoteBody({
+                title: 'Overflow',
+                content: 'x'.repeat(1_048_577),
+            });
+            euroOverflowResult = validateNoteBody({
+                title: 'Euro',
+                content: '€'.repeat(350_000), // 350,000 * 3 = 1,050,000 bytes > 1MB
+            });
+            exactlyLimitResult = validateNoteBody({
+                title: 'Limit',
+                content: 'x'.repeat(1_048_576),
+            });
+        } finally {
+            (globalThis as any).Buffer = origBuffer;
+        }
+
+        expect(validResult?.ok).toBe(true);
+        if (validResult?.ok) {
+            expect(validResult.value.title).toBe('Test Title');
+            expect(validResult.value.content).toBe('Hello, world! 🇺🇿');
+            expect(validResult.value.background_color).toBe(3);
+        }
+        expect(overflowResult?.ok).toBe(false);
+        if (overflowResult && !overflowResult.ok) {
+            expect(overflowResult.message).toContain('content too large');
+        }
+        expect(euroOverflowResult?.ok).toBe(false);
+        expect(exactlyLimitResult?.ok).toBe(true);
+    });
+
+    it('does not reference Buffer in validateNoteBody implementation', () => {
+        expect(validateNoteBody.toString()).not.toContain('Buffer');
+    });
+});

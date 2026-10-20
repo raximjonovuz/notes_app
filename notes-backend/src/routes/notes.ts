@@ -97,7 +97,7 @@ export function validateNoteBody(body: any): { ok: true; value: ValidatedNoteBod
     if (title.length > NOTE_TITLE_MAX) {
         return { ok: false, message: `title too long (max ${NOTE_TITLE_MAX} characters)` };
     }
-    if (Buffer.byteLength(content, 'utf8') > NOTE_CONTENT_MAX_BYTES) {
+    if (new TextEncoder().encode(content).length > NOTE_CONTENT_MAX_BYTES) {
         return { ok: false, message: `content too large (max ${NOTE_CONTENT_MAX_BYTES} bytes UTF-8)` };
     }
     if (background_color < NOTE_BG_COLOR_MIN || background_color > NOTE_BG_COLOR_MAX) {
