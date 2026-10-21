@@ -2,128 +2,317 @@ package com.example.notes.ui.theme
 
 import android.app.Activity
 import android.content.Context
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.core.content.edit
 import androidx.core.view.WindowCompat
+import android.os.Build
 
-private val LightColorScheme = lightColorScheme(
-    primary = LightPrimary,
-    onPrimary = LightOnPrimary,
-    background = LightBackground,
-    onBackground = LightOnBackground,
-    surface = LightSurface,
-    onSurface = LightOnSurface,
-    surfaceVariant = LightSurfaceVariant,
-    onSurfaceVariant = LightOnSurfaceVariant
-)
+/* =====================================================================
+ * V6.0 — Theme redesign · Theme entry point + ThemeManager
+ *
+ *   · `ThemeManager` keeps three pieces of state:
+ *       - themeMode : System / Light / Dark    (default = SYSTEM)
+ *       - dynamicColorEnabled : Boolean        (default = false)
+ *       - darkMode (Boolean) : back-compat snapshot, derived from
+ *         `themeMode`. Kept so legacy callers (`setDarkMode`,
+ *         `notesHeaderBackground`, `noteCardColor`, etc.) keep working.
+ *
+ *   · `NotesTheme` resolves the effective dark-mode flag at composition
+ *     time (so SYSTEM mode tracks `isSystemInDarkTheme()`) and exposes
+ *     it via [LocalNotesTheme]. New screens should read theme state
+ *     through the Local instead of reaching into [ThemeManager].
+ *
+ *   · Persistence:
+ *       KEY_THEME_MODE   → "SYSTEM" / "LIGHT" / "DARK"
+ *       KEY_DYNAMIC_COLOR → Boolean
+ *       KEY_DARK_MODE     → legacy Boolean (read once for migration)
+ *
+ *   · System dark-mode handling: because the LEGACY callers
+ *     (`notesHeaderBackground`, `noteCardColor`) read `ThemeManager.darkMode`
+ *     directly inside @Composable contexts, we update that snapshot
+ *     inside `NotesTheme` after resolving the SYSTEM branch via a
+ *     public, non-persisting mutator helper. This keeps the existing
+ *     helpers accurate without spinning up new APIs at every call site.
+ * ===================================================================== */
 
-private val DarkColorScheme = darkColorScheme(
-    primary = DarkPrimary,
-    onPrimary = DarkOnPrimary,
+/* -- Theme mode ------------------------------------------------------- */
+
+enum class ThemeMode { SYSTEM, LIGHT, DARK }
+
+/* -- ColorScheme presets (static, spec-faithful "Deep Forest") ------- */
+
+private val ForestDarkColorScheme = darkColorScheme(
     background = DarkBackground,
     onBackground = DarkOnBackground,
     surface = DarkSurface,
     onSurface = DarkOnSurface,
+    surfaceContainerLowest = DarkSurfaceContainerLowest,
+    surfaceContainerLow = DarkSurfaceContainerLow,
+    surfaceContainer = DarkSurfaceContainer,
+    surfaceContainerHigh = DarkSurfaceContainerHigh,
+    surfaceContainerHighest = DarkSurfaceContainerHighest,
     surfaceVariant = DarkSurfaceVariant,
-    onSurfaceVariant = DarkOnSurfaceVariant
+    onSurfaceVariant = DarkOnSurfaceVariant,
+    primary = DarkPrimary,
+    onPrimary = DarkOnPrimary,
+    primaryContainer = DarkPrimaryContainer,
+    onPrimaryContainer = DarkOnPrimaryContainer,
+    secondary = DarkSecondary,
+    onSecondary = DarkOnSecondary,
+    secondaryContainer = DarkSecondaryContainer,
+    onSecondaryContainer = DarkOnSecondaryContainer,
+    outline = DarkOutline,
+    outlineVariant = DarkOutlineVariant,
+    error = DarkError,
+    onError = DarkOnError,
+    errorContainer = DarkErrorContainer,
+    onErrorContainer = DarkOnErrorContainer
 )
 
+private val ForestLightColorScheme = lightColorScheme(
+    background = LightBackground,
+    onBackground = LightOnBackground,
+    surface = LightSurface,
+    onSurface = LightOnSurface,
+    surfaceContainerLowest = LightSurfaceContainerLowest,
+    surfaceContainerLow = LightSurfaceContainerLow,
+    surfaceContainer = LightSurfaceContainer,
+    surfaceContainerHigh = LightSurfaceContainerHigh,
+    surfaceContainerHighest = LightSurfaceContainerHighest,
+    surfaceVariant = LightSurfaceVariant,
+    onSurfaceVariant = LightOnSurfaceVariant,
+    primary = LightPrimary,
+    onPrimary = LightOnPrimary,
+    primaryContainer = LightPrimaryContainer,
+    onPrimaryContainer = LightOnPrimaryContainer,
+    secondary = LightSecondary,
+    onSecondary = LightOnSecondary,
+    secondaryContainer = LightSecondaryContainer,
+    onSecondaryContainer = LightOnSecondaryContainer,
+    outline = LightOutline,
+    outlineVariant = LightOutlineVariant,
+    error = LightError,
+    onError = LightOnError,
+    errorContainer = LightErrorContainer,
+    onErrorContainer = LightOnErrorContainer
+)
+
+/* -- CompositionLocal ------------------------------------------------- */
+
 /**
- * Holds the current theme. Mutated through [setDarkMode] (which also writes
- * to disk). Read by composables via the [darkMode] public getter which is a
- * Compose [mutableStateOf] so any recomposition will pick up the latest value.
- *
- * Persisted in [PREFS_NAME] under [KEY_DARK_MODE]. The disk read happens
- * lazily on first [setDarkMode] call and once eagerly from
- * [com.example.notes.NotesApplication.onCreate] so the very first screen
- * the user sees already has the correct theme.
+ * Effective per-composition theme state. Read via `LocalNotesTheme.current.isDark`
+ * from inside any screen wrapped in `NotesTheme { … }`.
  */
+data class NotesThemeState(
+    val isDark: Boolean,
+    val themeMode: ThemeMode,
+    val useDynamicColor: Boolean
+)
+val LocalNotesTheme = compositionLocalOf<NotesThemeState> {
+    error("NotesTheme was not applied at this call site")
+}
+
+/* -- ThemeManager ----------------------------------------------------- */
+
 object ThemeManager {
     private const val PREFS_NAME = "theme_prefs"
+    private const val KEY_THEME_MODE = "theme_mode"
+    private const val KEY_DYNAMIC_COLOR = "dynamic_color"
     private const val KEY_DARK_MODE = "dark_mode"
+    private const val KEY_DYNAMIC_COLOR_OLD = "use_dynamic_color"
 
-    /** Backing state. Read by [notesHeaderBackground] / [noteCardColor] / etc. */
-    var darkMode by mutableStateOf(false)
+    /** Active mode. SYSTEM follows the OS, others force light/dark. */
+    var themeMode by mutableStateOf(ThemeMode.SYSTEM)
+        private set
+
+    /** Dynamic color on/off — Android 12+. */
+    var dynamicColorEnabled by mutableStateOf(false)
         private set
 
     /**
-     * Apply a dark-mode preference. Persists to SharedPreferences so the
-     * choice survives process death.
+     * Snapshot of the effective dark flag.
+     *
+     * For SYSTEM mode, this is updated by [updateDarkSnapshot]
+     * every time NotesTheme resolves (i.e. on every recomposition
+     * triggered by configuration change or by the user picking a new
+     * mode). For LIGHT/DARK it's pinned at the time the user picked.
      */
-    fun setDarkMode(context: Context, value: Boolean) {
-        darkMode = value
+    var darkMode by mutableStateOf(false)
+        private set
+
+    /** Apply a theme preference. Persists and updates the snapshots. */
+    fun setMode(context: Context, mode: ThemeMode) {
+        themeMode = mode
+        val resolvedDark = when (mode) {
+            ThemeMode.LIGHT -> false
+            ThemeMode.DARK  -> true
+            ThemeMode.SYSTEM -> darkMode   // keep current; resolveDarkNow will refresh
+        }
+        if (mode != ThemeMode.SYSTEM) darkMode = resolvedDark
         context.applicationContext
             .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .edit { putBoolean(KEY_DARK_MODE, value) }
+            .edit {
+                putString(KEY_THEME_MODE, mode.name)
+                putBoolean(KEY_DARK_MODE, darkMode)
+            }
+    }
+
+    /** Back-compat alias for the old SettingsScreen boolean toggle. */
+    fun setDarkMode(context: Context, value: Boolean) {
+        setMode(context, if (value) ThemeMode.DARK else ThemeMode.LIGHT)
+    }
+
+    fun setDynamicColor(context: Context, value: Boolean) {
+        dynamicColorEnabled = value
+        context.applicationContext
+            .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit { putBoolean(KEY_DYNAMIC_COLOR, value) }
+    }
+
+    /** Non-persisting helper used by NotesTheme to refresh the snapshot. */
+    fun updateDarkSnapshot(value: Boolean) {
+        darkMode = value
     }
 
     /**
-     * Loads the persisted value into [darkMode]. Idempotent — calling
-     * multiple times has no adverse effect. Returns the loaded value
-     * for callers that want to chain UI changes after the read.
+     * Loads persisted values. Migrates from the legacy `dark_mode`
+     * Boolean (V5 line) into the new `theme_mode` String when needed.
      */
-    fun loadPersisted(context: Context): Boolean {
+    fun loadPersisted(context: Context): ThemeMode {
         val prefs = context.applicationContext
             .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val v = prefs.getBoolean(KEY_DARK_MODE, false)
-        darkMode = v
-        return v
+        val mode = when (prefs.getString(KEY_THEME_MODE, null)) {
+            ThemeMode.SYSTEM.name -> ThemeMode.SYSTEM
+            ThemeMode.LIGHT.name -> ThemeMode.LIGHT
+            ThemeMode.DARK.name  -> ThemeMode.DARK
+            else -> {
+                if (prefs.contains(KEY_DARK_MODE)) {
+                    if (prefs.getBoolean(KEY_DARK_MODE, false)) ThemeMode.DARK
+                    else ThemeMode.LIGHT
+                } else ThemeMode.SYSTEM
+            }
+        }
+        themeMode = mode
+        // Initial guess — NotesTheme will overwrite with real value.
+        darkMode = when (mode) {
+            ThemeMode.LIGHT -> false
+            ThemeMode.DARK  -> true
+            ThemeMode.SYSTEM -> false
+        }
+        dynamicColorEnabled = prefs.getBoolean(KEY_DYNAMIC_COLOR,
+            prefs.getBoolean(KEY_DYNAMIC_COLOR_OLD, false))
+        return mode
     }
 }
 
+/* -- NotesTheme entry point ------------------------------------------ */
+
+/**
+ * Reads [ThemeManager] state and applies a Material3 ColorScheme +
+ * Typography + Shapes to the inner content. Tracks `isSystemInDarkTheme`
+ * live for SYSTEM mode.
+ */
 @Composable
 fun NotesTheme(
-    darkTheme: Boolean = ThemeManager.darkMode,
+    themeMode: ThemeMode = ThemeManager.themeMode,
+    dynamicColor: Boolean = ThemeManager.dynamicColorEnabled,
     content: @Composable () -> Unit
 ) {
-    val colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme
+    val systemDark = isSystemInDarkTheme()
+    val isDark = when (themeMode) {
+        ThemeMode.LIGHT -> false
+        ThemeMode.DARK  -> true
+        ThemeMode.SYSTEM -> systemDark
+    }
+    // Refresh the back-compat snapshot so legacy readers see truth.
+    ThemeManager.updateDarkSnapshot(isDark)
+
+    val colorScheme = when {
+        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
+            val ctx = LocalContext.current
+            if (isDark) dynamicDarkColorScheme(ctx) else dynamicLightColorScheme(ctx)
+        }
+        isDark -> ForestDarkColorScheme
+        else   -> ForestLightColorScheme
+    }
+
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {
             val window = (view.context as Activity).window
-            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !darkTheme
-            window.statusBarColor = colorScheme.background.toArgb()
-            window.navigationBarColor = colorScheme.background.toArgb()
+            val insets = WindowCompat.getInsetsController(window, view)
+            insets.isAppearanceLightStatusBars = !isDark
+            insets.isAppearanceLightNavigationBars = !isDark
+            // Edge-to-edge: transparent bars + scheme-driven body
+            // means the app's `surface` color bleeds into them.
+            window.statusBarColor = Color.Transparent.toArgb()
+            window.navigationBarColor = Color.Transparent.toArgb()
         }
     }
-    MaterialTheme(
-        colorScheme = colorScheme,
-        typography = Typography,
-        content = content
-    )
+
+    CompositionLocalProvider(
+        LocalNotesTheme provides NotesThemeState(
+            isDark = isDark,
+            themeMode = themeMode,
+            useDynamicColor = dynamicColor
+        )
+    ) {
+        MaterialTheme(
+            colorScheme = colorScheme,
+            typography = NotesTypography,
+            shapes = Shapes,
+            content = content
+        )
+    }
 }
+
+/* -- Back-compat helpers used by existing screens ------------------- */
+/*    NotesListScreen / NoteEditScreen / LoginScreen / SettingsScreen */
 
 @Composable
 fun notesHeaderBackground(): Color {
-    return if (ThemeManager.darkMode) DarkHeaderBg else LightHeaderBg
+    // V6 unifies: header sits on `surface`. Cards draw on
+    // `surfaceContainer` so the page edge still reads as a hierarchy.
+    return MaterialTheme.colorScheme.surface
 }
 
 @Composable
 fun notesPageBackground(): Color {
-    return if (ThemeManager.darkMode) DarkPageBg else LightPageBg
+    return MaterialTheme.colorScheme.surfaceContainerLow
 }
 
 @Composable
 fun noteCardColor(index: Int): Color {
-    val dark = ThemeManager.darkMode
+    val isDark = LocalNotesTheme.current.isDark
     return when (index) {
-        1 -> if (dark) NoteColorYellowDark else NoteColorYellow
-        2 -> if (dark) NoteColorBlueDark else NoteColorBlue
-        3 -> if (dark) NoteColorPinkDark else NoteColorPink
-        4 -> if (dark) NoteColorGreenDark else NoteColorGreen
-        5 -> if (dark) NoteColorOrangeDark else NoteColorOrange
-        6 -> if (dark) NoteColorPurpleDark else NoteColorPurple
-        7 -> if (dark) NoteColorRedDark else NoteColorRed
-        else -> if (dark) NoteColorDefaultDark else NoteColorDefault
+        1 -> if (isDark) NoteColorYellowDark else NoteColorYellow
+        2 -> if (isDark) NoteColorBlueDark else NoteColorBlue
+        3 -> if (isDark) NoteColorPinkDark else NoteColorPink
+        4 -> if (isDark) NoteColorGreenDark else NoteColorGreen
+        5 -> if (isDark) NoteColorOrangeDark else NoteColorOrange
+        6 -> if (isDark) NoteColorPurpleDark else NoteColorPurple
+        7 -> if (isDark) NoteColorRedDark else NoteColorRed
+        else -> if (isDark) NoteColorDefaultDark else NoteColorDefault
     }
+}
+
+@Composable
+fun noteCardOnColor(index: Int): Color {
+    return if (LocalNotesTheme.current.isDark) Mist100 else Forest950
 }

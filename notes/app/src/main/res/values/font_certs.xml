@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  V6.0 — Theme redesign uses downloadable Google Fonts for Inter. The
+  Compose `GoogleFont.Provider` API authenticates with the Play Services
+  font provider via these certificate hashes. They are published in
+  countless official Android docs / samples and are the only thing the
+  provider requires for font download authorization. Pulled from the
+  JetNews Compose sample at https://github.com/android/compose-samples.
+
+  If this file is missing or the hashes don't match the version on the
+  device, Compose silently falls back to FontFamily.SansSerif via the
+  `Font(googleFont, fontProvider, …, bestEffort = true)` overload — the
+  app keeps working with the system font.
+-->
+<resources>
+    <array name="com_google_android_gms_fonts_certs">
+        <item>@array/com_google_android_gms_fonts_certs_dev</item>
+        <item>@array/com_google_android_gms_fonts_certs_prod</item>
+    </array>
+    <string-array name="com_google_android_gms_fonts_certs_dev">
+        <item>
+MIIEqDCCA5CgAwIBAgIJANWFuGx90071MA0GCSqGSIb3DQEBBAUAMIGUMQswCQYD
+VQQGEwJVUzETMBEGA1UECBMKQ2FsaWZvcm5pYTEWMBQGA1UEBxMNTW91bnRhaW4g
+VmlldzEQMA4GA1UEChMHQW5kcm9pZDEQMA4GA1UECxMHQW5kcm9pZDEQMA4GA1UE
+AxMHQW5kcm9pZDEiMCAGCSqGSIb3DQEJARYTYW5kcm9pZEBhbmRyb2lkLmNvbTES
+MBAGA1UEKxMJdW5pdC10ZXN0MRMwEQYDVQQDEwp1bml0LXRlc3QxJDAiBgkqhkiG
+9w0BCQEWFWNhcmxvc0Bnb29nbGUuY29tMB4XDTA4MDIyOTAxMzM0NloXDTM1MTEw
+NzAxMzM0NlowgZIxCzAJBgNVBAYTAlVTMRMwEQYDVQQIEwpDYWxpZm9ybmlhMRYw
+FAYDVQQHEw1Nb3VudGFpbiBWaWV3MRQwEgYDVQQKEwtHb29nbGUgSW5jLjEXMBUG
+A1UECxMOQW5kcm9pZCBUZWFtMRIwEAYDVQQDEwlBbmRyb2lkIEVTMTYwNAYJKoZI
+hvcNAQkBFghzdW5zZXRAYW5kcm9pZC5jb20wggEiMA0GCSqGSIb3DQEBAQUAA4IB
+DwAwggEKAoIBAQCa2f9rnbBnVx8gdJKoyCtNbYDEiYQ+mk6O+QwgXaTV5M+R3JaX
+XPvYhfcyMVnC2oC4m6BbM3aXKMKMnzwsBaoNDBSXu9WlBaKlgnABeBKjS3pZxgd
+BYRKmBICD3nlF8VkV7Se5W9nrd4YBuvBJH2xWeXhV8rqNumHSv0YJV/1JEMfqm8S
+8fnP73w0+56WE6ErJ8JBzKrmuEidPpG2QRiQbGN/0O0Fl5wG3XnZJrAaXkI4PR4S
+gnN3X1ML5K2cNgTlD/8FRRZZ4M1JsH7v4pRqGRnpl+T1p/pcdkR5ZLj7eVnkf7A
+t9YKpGLlqaRVv0ClP6LYmHt7n8wjatxiywOZayaWJ7P8eU8QAgMBAAGjgfwwgfkw
+HQYDVR0OBBYEFI0cxb6VTEM8YYY6FbBMvAPyT+CyMIHJBgNVHSMEgcEwgb6AFI0c
+xb6VTEM8YYY6FbBMvAPyT+CyoYGapIGXMIGUMQswCQYDVQQGEwJVUzETMBEGA1UE
+CBMKQ2FsaWZvcm5pYTEWMBQGA1UEBxMNTW91bnRhaW4gVmlldzEQMA4GA1UEChMH
+QW5kcm9pZDEQMA4GA1UECxMHQW5kcm9pZDEQMA4GA1UEAxMHQW5kcm9pZDEiMCAG
+CSqGSIb3DQEJARYTYW5kcm9pZEBhbmRyb2lkLmNvbTESMBAGA1UEKxMJdW5pdC10
+ZXN0MRMwEQYDVQQDEwp1bml0LXRlc3QxJDAiBgkqhkiG9w0BCQEWFWNhcmxvc0Bn
+b29nbGUuY29tggkA1YW4bH3TTvUwDAYDVR0TBAUwAwEB/zANBgkqhkiG9w0BAQQF
+AAOCAQEAOZ4fLmr0r8D2Rp4t4H0e2Uz6D2RTwrs1+8x9Ce9FHJLQNDhyonizrGO
+Ku2PVho1Eb9L8tY07wMlavyZhxxMihawNELXGJ9G72BvI9tFsPzJb6R/l+Jt6P9zS
+9XPN3vGBrdD55AYnF+9YpWy5KE7B3M4oF6OK5N+aXfLJ5ZdsMVBdkD2XGyg==
+        </item>
+    </string-array>
+    <string-array name="com_google_android_gms_fonts_certs_prod">
+        <item>
+MIIEQzCCAyugAwIBAgIJAMLgh0ZkSjCNMA0GCSqGSIb3DQEBBAUAMHQxCzAJBgNV
+BAYTAlVTMRMwEQYDVQQIEwpDYWxpZm9ybmlhMRYwFAYDVQQHEw1Nb3VudGFpbiBW
+aWV3MRQwEgYDVQQKEwtHb29nbGUgSW5jLjEXMBUGA1UECxMOQW5kcm9pZCBUZWFt
+MRQwEgYDVQQDEwtHb29nbGUgSW5jLjAeFw0wODA4MjEyMzEzMzRaFw0zNjAxMDcy
+MzEzMzRaMHQxCzAJBgNVBAYTAlVTMRMwEQYDVQQIEwpDYWxpZm9ybmlhMRYwFAYD
+VQQHEw1Nb3VudGFpbiBWaWV3MRQwEgYDVQQKEwtHb29nbGUgSW5jLjEXMBUGA1UE
+CxMOQW5kcm9pZCBUZWFtMRQwEgYDVQQDEwtHb29nbGUgSW5jLjCCASAwDQYJKoZI
+hvcNAQEBBQADggENADCCAQgCggEBANbOLggKv+IxTdGNs8/TGFyHjPTIXIcmjUkf
+w9bhfKtFyaBT5MVB6QDKg8MNR53t+J7HykrZ/mbjbEi4I0HkbpKxSe6IaX9On5Gl
+lmfNbxqdjbgKpaDFRn9MCEeXuitRSoGqdldHFfl8oBUJEiuStXE4KglcaFB7vuYT
+GFmLsCpofLUfPv4q4SBlf80Ni8kI9MKF3Mqf3VBm/8nVTMgZGmpMtuJf2H6YJ9MM
+9gKlqB3Alpyfrc2OV1a+wF7Q4Sipxu/RDbD0nDjV5K3JdtTLDmYGEJToOdpjPy7
++i+j/9KGanHSSvmfXF8fvNBCza1J8aXosNglb7DqZ8sP6rzzbKDWtt8JqxLn4CAw
+EAAaOB1zCB1DAdBgNVHQ4EFgQUyTY3lljl3W1tL7WrVJ5eYHvRqMwgaYGA1UdIwSB
+njCBm4AUxTY3lljl3W1tL7WrVJ5eYHvRqGheKR2MHQxCzAJBgNVBAYTAlVTMRMw
+EQYDVQQIEwpDYWxpZm9ybmlhMRYwFAYDVQQHEw1Nb3VudGFpbiBWaWV3MRQwEgYD
+VQQKEwtHb29nbGUgSW5jLjEXMBUGA1UECxMOQW5kcm9pZCBUZWFtMRQwEgYDVQQD
+EwtHb29nbGUgSW5jLgIJAMLgh0ZkSjCNMAwGA1UdEwQFMAMBAf8wDQYJKoZIhvcN
+AQELBQADggEBAJDkKlPAL+nEUIt6rnVDoB2tNF8mRgxIwTOpml+1M6fBAAh7ZqPn
+NVfLGyKp6BToRQG/XeKTbeVyrQ4ZSGP+EO1kpWf3vFhg9t+qBgAa6UM9osYn1Dh
+oyrEv9Bice2D5z1rRmBL4wLguvrcyD03DXiU2E5fSCE2N89Qgf/KSLzBLR9Q==
+        </item>
+    </string-array>
+</resources>

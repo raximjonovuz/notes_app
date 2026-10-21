@@ -1,70 +1,77 @@
 package com.example.notes.ui.notes
 
-import android.graphics.BitmapFactory
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
+import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
+import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridItemSpan
+import androidx.compose.foundation.lazy.staggeredgrid.items
+import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Sort
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckBox
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CloudOff
+
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.NoteAlt
+import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.SearchOff
-import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.Sync
-import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.ViewAgenda
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -74,80 +81,37 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.notes.data.local.NoteEntity
 import com.example.notes.ui.edit.blocksToPlainText
 import com.example.notes.ui.edit.parseBlocksFromContent
 import com.example.notes.ui.theme.noteCardColor
+import com.example.notes.ui.theme.noteCardOnColor
 import com.example.notes.ui.theme.notesHeaderBackground
 import java.text.SimpleDateFormat
-import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
 enum class ViewMode { LINEAR, GRID }
 
-/* -----------------------------------------------------------------------
- * Date grouping helpers
- * --------------------------------------------------------------------- */
+/* =====================================================================
+ *  Screen
+ * ===================================================================== */
 
-/**
- * Build section labels like "Today", "Yesterday", or "MMM dd, yyyy" for the
- * given timestamp using the device's local timezone (the default Calendar
- * / Date uses the device zone).
- */
-private fun sectionLabelFor(timestamp: Long): String {
-    val now = Calendar.getInstance()
-    val then = Calendar.getInstance().apply { timeInMillis = timestamp }
-
-    val sameDay = now.get(Calendar.YEAR) == then.get(Calendar.YEAR) &&
-        now.get(Calendar.DAY_OF_YEAR) == then.get(Calendar.DAY_OF_YEAR)
-    if (sameDay) return "Today"
-
-    val yesterday = (now.clone() as Calendar).apply { add(Calendar.DAY_OF_YEAR, -1) }
-    val isYesterday = yesterday.get(Calendar.YEAR) == then.get(Calendar.YEAR) &&
-        yesterday.get(Calendar.DAY_OF_YEAR) == then.get(Calendar.DAY_OF_YEAR)
-    if (isYesterday) return "Yesterday"
-
-    val formatter = SimpleDateFormat("MMM dd, yyyy", Locale.getDefault())
-    return formatter.format(Date(timestamp))
-}
-
-/**
- * Group a list of notes into sections. The notes MUST be in updatedAt DESC
- * order (the ViewModel already enforces that). The returned list preserves
- * the same note order while inserting a section-header marker in front of
- * each group.
- */
-private fun groupNotesByDate(notes: List<NoteEntity>): List<Any> {
-    if (notes.isEmpty()) return emptyList()
-    val result = mutableListOf<Any>()
-    var currentLabel: String? = null
-    notes.forEach { note ->
-        val label = sectionLabelFor(note.updatedAt)
-        if (label != currentLabel) {
-            result += label
-            currentLabel = label
-        }
-        result += note
-    }
-    return result
-}
-
-/* -----------------------------------------------------------------------
- * Screen
- * --------------------------------------------------------------------- */
-
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun NotesListScreen(
     viewModel: NotesListViewModel,
@@ -162,14 +126,22 @@ fun NotesListScreen(
     val syncStatus by viewModel.syncStatus.collectAsStateWithLifecycle()
     val sort by viewModel.sort.collectAsStateWithLifecycle()
 
-    // V4.3.1: when the screen is first composed, re-read the active
-    // user from AuthStore and re-emit userIdFlow. This guarantees
-    // NotesListViewModel.s flatMapLatest picks up the right userId
-    // even if the screen is shown right after a Google Sign-In
-    // completes.
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var showOfflineBanner by remember { mutableStateOf(false) }
+
     LaunchedEffect(Unit) {
         viewModel.refreshActiveUser()
+        val cm = context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
+        val net = cm?.activeNetwork
+        val caps = cm?.getNetworkCapabilities(net)
+        val isOnline = caps?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
+        if (!isOnline) {
+            showOfflineBanner = true
+            kotlinx.coroutines.delay(1200)
+            showOfflineBanner = false
+        }
     }
+
 
     var isSearchActive by remember { mutableStateOf(false) }
     var isSelectionMode by remember { mutableStateOf(false) }
@@ -177,147 +149,88 @@ fun NotesListScreen(
     var viewMode by remember { mutableStateOf(ViewMode.LINEAR) }
     var overflowExpanded by remember { mutableStateOf(false) }
     var sortMenuExpanded by remember { mutableStateOf(false) }
+    var longPressedNoteId by remember { mutableStateOf<Long?>(null) }
 
     val searchFocusRequester = remember { FocusRequester() }
+    val linearListState = rememberLazyListState()
+    val staggeredGridState = rememberLazyStaggeredGridState()
 
     LaunchedEffect(isSearchActive) {
         if (isSearchActive) searchFocusRequester.requestFocus()
     }
 
-    val (titleText, emptyText) = when (filter) {
-        NotesFilter.ALL -> "All Notes" to "No notes yet.\nTap + to create one."
-        NotesFilter.FAVORITES -> "Favorites" to "No favorites yet.\nTap the star on a note to add it here."
-        NotesFilter.TRASH -> "Trash" to "Trash is empty."
-    }
-
     fun toggleSelection(noteId: Long) {
-        selectedIds = if (selectedIds.contains(noteId)) {
-            selectedIds - noteId
-        } else {
-            selectedIds + noteId
-        }
+        selectedIds = if (selectedIds.contains(noteId)) selectedIds - noteId
+        else selectedIds + noteId
         if (selectedIds.isEmpty()) isSelectionMode = false
     }
 
-    val headerBg = notesHeaderBackground()
+    val titleText = when (filter) {
+        NotesFilter.ALL -> "All Notes"
+        NotesFilter.FAVORITES -> "Favorites"
+        NotesFilter.TRASH -> "Trash"
+    }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
                     when {
-                        isSelectionMode -> {
+                        isSelectionMode -> Text(
+                            text = "${selectedIds.size} selected",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        isSearchActive -> SearchPillField(
+                            query = searchQuery,
+                            onQueryChange = viewModel::onSearchQueryChange,
+                            focusRequester = searchFocusRequester,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp)
+                        )
+                        else -> Column {
                             Text(
-                                text = "${selectedIds.size} selected",
+                                text = titleText,
                                 style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.SemiBold
                             )
-                        }
-                        isSearchActive -> {
-                            // Issue 1: search field uses notesHeaderBackground()
-                            // for ALL container / indicator colors so it looks
-                            // visually unified with the surrounding header bar.
-                            TextField(
-                                value = searchQuery,
-                                onValueChange = viewModel::onSearchQueryChange,
-                                placeholder = {
-                                    Text(
-                                        "Search notes...",
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                },
-                                singleLine = true,
-                                colors = TextFieldDefaults.colors(
-                                    focusedContainerColor = headerBg,
-                                    unfocusedContainerColor = headerBg,
-                                    focusedIndicatorColor = headerBg,
-                                    unfocusedIndicatorColor = headerBg,
-                                    disabledContainerColor = headerBg,
-                                    disabledIndicatorColor = headerBg
-                                ),
-                                textStyle = TextStyle(
-                                    fontSize = 18.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                ),
-                                trailingIcon = {
-                                    // V4.5: a one-tap clear (×) so the user
-                                    // doesn't have to long-press to select
-                                    // the text and delete it.
-                                    if (searchQuery.isNotEmpty()) {
-                                        IconButton(onClick = {
-                                            viewModel.onSearchQueryChange("")
-                                        }) {
-                                                Icon(
-                                                    imageVector = Icons.Filled.Close,
-                                                    contentDescription = "Clear search"
-                                                )
-                                            }
-                                    }
-                                },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .focusRequester(searchFocusRequester)
+                            Text(
+                                text = "$noteCount notes",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                        }
-                        else -> {
-                            Column {
-                                Text(
-                                    text = titleText,
-                                    style = MaterialTheme.typography.titleLarge,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Text(
-                                    text = "$noteCount notes",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                SyncStatusText(status = syncStatus)
-                            }
+                            SyncStatusText(status = syncStatus)
                         }
                     }
                 },
                 navigationIcon = {
                     when {
-                        isSelectionMode -> {
-                            IconButton(onClick = {
-                                isSelectionMode = false
-                                selectedIds = emptySet()
-                            }) {
-                                Icon(
-                                    Icons.AutoMirrored.Filled.ArrowBack,
-                                    contentDescription = "Exit selection"
-                                )
-                            }
+                        isSelectionMode -> IconButton(onClick = {
+                            isSelectionMode = false
+                            selectedIds = emptySet()
+                        }) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Exit selection"
+                            )
                         }
-                        isSearchActive -> {
-                            IconButton(onClick = {
-                                isSearchActive = false
-                                viewModel.onSearchQueryChange("")
-                            }) {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                    contentDescription = "Close search"
-                                )
-                            }
+                        isSearchActive -> IconButton(onClick = {
+                            isSearchActive = false
+                            viewModel.onSearchQueryChange("")
+                        }) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Close search"
+                            )
                         }
-                        else -> {
-                            IconButton(onClick = onMenuClick) {
-                                Icon(
-                                    imageVector = Icons.Filled.Menu,
-                                    contentDescription = "Menu"
-                                )
-                            }
+                        else -> IconButton(onClick = onMenuClick) {
+                            Icon(Icons.Filled.Menu, contentDescription = "Menu")
                         }
                     }
                 },
                 actions = {
                     if (isSelectionMode) {
-                        // V5.0.2: "Select all" so the user can wipe dozens
-                        // of accidentally-created test notes with two taps
-                        // instead of ticking every checkbox individually.
-                        // Only offered when the current list has at least
-                        // one note — hiding the action on an empty page
-                        // avoids confusing empty-state affordances.
                         if (notes.isNotEmpty()) {
                             val allSelected = selectedIds.size == notes.size
                             TextButton(onClick = {
@@ -335,11 +248,9 @@ fun NotesListScreen(
                                 selectedIds.forEach { id ->
                                     val note = notes.find { it.id == id }
                                     if (note != null) {
-                                        if (filter == NotesFilter.TRASH) {
+                                        if (filter == NotesFilter.TRASH)
                                             viewModel.deleteNote(note)
-                                        } else {
-                                            viewModel.moveToTrash(note)
-                                        }
+                                        else viewModel.moveToTrash(note)
                                     }
                                 }
                                 isSelectionMode = false
@@ -352,7 +263,7 @@ fun NotesListScreen(
                                 contentDescription = "Delete selected",
                                 tint = if (selectedIds.isNotEmpty())
                                     MaterialTheme.colorScheme.error
-                                    else MaterialTheme.colorScheme.onSurfaceVariant
+                                else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     } else if (isSearchActive) {
@@ -391,7 +302,10 @@ fun NotesListScreen(
                                 )
                                 DropdownMenuItem(
                                     text = {
-                                        Text(if (viewMode == ViewMode.LINEAR) "Grid view" else "List view")
+                                        Text(
+                                            if (viewMode == ViewMode.LINEAR) "Grid view"
+                                            else "List view"
+                                        )
                                     },
                                     leadingIcon = {
                                         Icon(
@@ -404,12 +318,10 @@ fun NotesListScreen(
                                     onClick = {
                                         overflowExpanded = false
                                         viewMode = if (viewMode == ViewMode.LINEAR)
-                                            ViewMode.GRID else ViewMode.LINEAR
+                                            ViewMode.GRID
+                                        else ViewMode.LINEAR
                                     }
                                 )
-                                // V4.5: sort submenu — the picker itself lives
-                                // outside this dropdown so we can manage its
-                                // open state independently.
                                 HorizontalDivider()
                                 DropdownMenuItem(
                                     text = {
@@ -432,9 +344,6 @@ fun NotesListScreen(
                                     }
                                 )
                             }
-                            // Sort sub-dropdown (rendered as a separate
-                            // DropdownMenu anchored to the same overflow
-                            // trigger; uses its own open state).
                             DropdownMenu(
                                 expanded = sortMenuExpanded,
                                 onDismissRequest = { sortMenuExpanded = false }
@@ -452,10 +361,7 @@ fun NotesListScreen(
                                         },
                                         leadingIcon = {
                                             if (sort == option) {
-                                                Icon(
-                                                    Icons.Filled.Check,
-                                                    contentDescription = null
-                                                )
+                                                Icon(Icons.Filled.Check, contentDescription = null)
                                             }
                                         },
                                         onClick = {
@@ -469,7 +375,7 @@ fun NotesListScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = headerBg,
+                    containerColor = notesHeaderBackground(),
                     titleContentColor = MaterialTheme.colorScheme.onSurface,
                     actionIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                     navigationIconContentColor = MaterialTheme.colorScheme.onSurface
@@ -478,13 +384,24 @@ fun NotesListScreen(
         },
         floatingActionButton = {
             if (!isSelectionMode && filter != NotesFilter.TRASH) {
-                // ExtendedFloatingActionButton (vs V1 floating "+" only)
-                // — the explicit "Compose" text stops users from confusing
-                // the new-note FAB with the Sync icon in the top bar.
-                // Position is bumped to Center to put more visual space
-                // between FAB and Sync.
-                androidx.compose.material3.ExtendedFloatingActionButton(
+                val linearCollapsed by remember {
+                    derivedStateOf {
+                        linearListState.firstVisibleItemIndex > 0 ||
+                            linearListState.firstVisibleItemScrollOffset > 240
+                    }
+                }
+                val gridCollapsed by remember {
+                    derivedStateOf {
+                        staggeredGridState.firstVisibleItemIndex > 0 ||
+                            staggeredGridState.firstVisibleItemScrollOffset > 240
+                    }
+                }
+                val fabCollapsed =
+                    if (viewMode == ViewMode.LINEAR) linearCollapsed else gridCollapsed
+
+                ExtendedFloatingActionButton(
                     onClick = onAddNote,
+                    expanded = !fabCollapsed,
                     text = { Text("Compose") },
                     icon = {
                         Icon(
@@ -492,167 +409,258 @@ fun NotesListScreen(
                             contentDescription = "Compose note"
                         )
                     },
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer
                 )
             }
         },
-        floatingActionButtonPosition = androidx.compose.material3.FabPosition.Center
+        floatingActionButtonPosition = androidx.compose.material3.FabPosition.Center,
+        containerColor = notesHeaderBackground()
     ) { innerPadding ->
-        // V5.1.5 — wrap the body in a pull-to-refresh container so the
-        // user can trigger sync by pulling the list down. The sync icon
-        // in the top bar stays for users who prefer one-tap; both call
-        // the same viewModel.syncNow().
-        val isRefreshing = syncStatus.syncing
         androidx.compose.material3.pulltorefresh.PullToRefreshBox(
-            isRefreshing = isRefreshing,
+            isRefreshing = syncStatus.syncing,
             onRefresh = { viewModel.syncNow() },
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(MaterialTheme.colorScheme.background)
-            ) {
-            if (notes.isEmpty()) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
+            Box(modifier = Modifier.fillMaxSize()) {
+                if (notes.isEmpty()) {
+                    EmptyStateFor(
+                        filter = filter,
+                        searchQuery = searchQuery,
+                        isTrash = filter == NotesFilter.TRASH,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(32.dp)
+                    )
+                } else {
+                    val (pinned, others) = remember(notes) { notes.partition { it.isPinned } }
+                    if (viewMode == ViewMode.LINEAR) {
+                        LinearNoteList(
+                            pinned = pinned,
+                            others = others,
+                            linearListState = linearListState,
+                            isSelectionMode = isSelectionMode,
+                            isSelected = { selectedIds.contains(it) },
+                            onClickNote = { id ->
+                                if (isSelectionMode) toggleSelection(id)
+                                else if (filter != NotesFilter.TRASH) onNoteClick(id)
+                            },
+                            onLongPress = { id -> if (!isSelectionMode) longPressedNoteId = id },
+                            onToggleSelected = { id -> toggleSelection(id) }
+                        )
+                    } else {
+                        StaggeredNotesGrid(
+                            pinned = pinned,
+                            others = others,
+                            staggeredGridState = staggeredGridState,
+                            isSelectionMode = isSelectionMode,
+                            isSelected = { selectedIds.contains(it) },
+                            onClickNote = { id ->
+                                if (isSelectionMode) toggleSelection(id)
+                                else if (filter != NotesFilter.TRASH) onNoteClick(id)
+                            },
+                            onLongPress = { id -> if (!isSelectionMode) longPressedNoteId = id },
+                            onToggleSelected = { id -> toggleSelection(id) }
+                        )
+                    }
+                }
+
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = showOfflineBanner,
+                    enter = androidx.compose.animation.slideInVertically(initialOffsetY = { it }) + androidx.compose.animation.fadeIn(),
+                    exit = androidx.compose.animation.slideOutVertically(targetOffsetY = { it }) + androidx.compose.animation.fadeOut(),
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 24.dp)
                 ) {
-                    // V5.1.5 — friendlier empty state with a larger icon
-                    // circle, the actual situation-specific message, and a
-                    // hint that tells the user what to do next.
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.padding(32.dp)
+                    androidx.compose.material3.Surface(
+                        shape = RoundedCornerShape(24.dp),
+                        color = MaterialTheme.colorScheme.inverseSurface.copy(alpha = 0.92f),
+                        contentColor = MaterialTheme.colorScheme.inverseOnSurface,
+                        tonalElevation = 6.dp,
+                        shadowElevation = 8.dp
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(96.dp)
-                                .clip(androidx.compose.foundation.shape.CircleShape)
-                                .background(
-                                    MaterialTheme.colorScheme.surfaceVariant
-                                        .copy(alpha = 0.6f)
-                                ),
-                            contentAlignment = Alignment.Center
+                        Row(
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             Icon(
-                                imageVector = when {
-                                    searchQuery.isNotBlank() -> Icons.Filled.SearchOff
-                                    filter == NotesFilter.FAVORITES -> Icons.Filled.StarBorder
-                                    filter == NotesFilter.TRASH -> Icons.Outlined.Delete
-                                    else -> Icons.Filled.NoteAlt
-                                },
+                                imageVector = Icons.Filled.CloudOff,
                                 contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(48.dp)
+                                modifier = Modifier.size(18.dp),
+                                tint = MaterialTheme.colorScheme.inverseOnSurface
+                            )
+                            Text(
+                                text = "Offline",
+                                style = MaterialTheme.typography.labelLarge
                             )
                         }
-                        Spacer(Modifier.height(16.dp))
-                        Text(
-                            text = if (searchQuery.isNotBlank()) {
-                                "No notes for \"${searchQuery.trim()}\""
-                            } else emptyText,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            text = when {
-                                searchQuery.isNotBlank() -> "Try a different search term."
-                                filter == NotesFilter.FAVORITES -> "Tap the star on a note to add it here."
-                                filter == NotesFilter.TRASH -> "Trash is empty. Deleted notes show up here."
-                                else -> "Tap the Compose button below to write your first note."
-                            },
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                        )
-                    }
-                }
-            } else if (viewMode == ViewMode.LINEAR) {
-                // Issue 2: group notes by their updatedAt date. Section
-                // headers sit at the TOP of each group. Within each group
-                // notes are already sorted by updatedAt DESC.
-                val items = groupNotesByDate(notes)
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(
-                        start = 16.dp,
-                        end = 16.dp,
-                        top = 16.dp,
-                        bottom = 88.dp
-                    ),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(
-                        items = items,
-                        key = { item ->
-                            when (item) {
-                                is String -> "section:$item"
-                                is NoteEntity -> "note:${item.id}"
-                                else -> item.hashCode().toString()
-                            }
-                        }
-                    ) { item ->
-                        when (item) {
-                            is String -> SectionHeader(label = item)
-                            is NoteEntity -> NoteCard(
-                                note = item,
-                                isSelectionMode = isSelectionMode,
-                                isSelected = selectedIds.contains(item.id),
-                                onClick = {
-                                    if (isSelectionMode) toggleSelection(item.id)
-                                    else if (filter != NotesFilter.TRASH) onNoteClick(item.id)
-                                },
-                                onToggleSelected = { toggleSelection(item.id) },
-                                onToggleFavorite = { viewModel.toggleFavorite(item) },
-                                onTogglePin = { viewModel.togglePin(item) }
-                            )
-                        }
-                    }
-                }
-            } else {
-                // Grid view (no date grouping — kept simple as before).
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(2),
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(notes, key = { it.id }) { note ->
-                        NoteGridCard(
-                            note = note,
-                            isSelectionMode = isSelectionMode,
-                            isSelected = selectedIds.contains(note.id),
-                            onClick = {
-                                if (isSelectionMode) toggleSelection(note.id)
-                                else if (filter != NotesFilter.TRASH) onNoteClick(note.id)
-                            },
-                            onToggleFavorite = { viewModel.toggleFavorite(note) }
-                        )
                     }
                 }
             }
+        }
+
+    }
+
+    longPressedNoteId?.let { id ->
+        val note = notes.find { it.id == id }
+        if (note != null) {
+            val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+            ModalBottomSheet(
+                onDismissRequest = { longPressedNoteId = null },
+                sheetState = sheetState,
+                containerColor = MaterialTheme.colorScheme.surfaceContainer
+            ) {
+                NoteActionsSheet(
+                    note = note,
+                    onTogglePin = {
+                        viewModel.togglePin(note)
+                        longPressedNoteId = null
+                    },
+                    onToggleFavorite = {
+                        viewModel.toggleFavorite(note)
+                        longPressedNoteId = null
+                    },
+                    onDelete = {
+                        if (filter == NotesFilter.TRASH) {
+                            viewModel.deleteNote(note)
+                        } else {
+                            viewModel.moveToTrash(note)
+                        }
+                        longPressedNoteId = null
+                    },
+                    isTrashContext = filter == NotesFilter.TRASH
+                )
+            }
+        } else {
+            longPressedNoteId = null
+        }
+    }
+}
+
+/* =====================================================================
+ *  List / Grid renderers
+ * ===================================================================== */
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun LinearNoteList(
+    pinned: List<NoteEntity>,
+    others: List<NoteEntity>,
+    linearListState: androidx.compose.foundation.lazy.LazyListState,
+    isSelectionMode: Boolean,
+    isSelected: (Long) -> Boolean,
+    onClickNote: (Long) -> Unit,
+    onLongPress: (Long) -> Unit,
+    onToggleSelected: (Long) -> Unit
+) {
+    LazyColumn(
+        state = linearListState,
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(
+            start = 16.dp, end = 16.dp, top = 8.dp, bottom = 96.dp
+        ),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        if (pinned.isNotEmpty()) {
+            item(key = "section:pinned") {
+                SectionHeader("Pinned", pinned.size)
+            }
+            items(items = pinned, key = { it.id }) { note ->
+                NoteCard(
+                    note = note,
+                    isSelectionMode = isSelectionMode,
+                    isSelected = isSelected(note.id),
+                    onClick = { onClickNote(note.id) },
+                    onLongClick = { onLongPress(note.id) },
+                    onToggleSelected = { onToggleSelected(note.id) }
+                )
+            }
+        }
+        if (others.isNotEmpty()) {
+            if (pinned.isNotEmpty()) {
+                item(key = "section:others") {
+                    SectionHeader("Others", others.size)
+                }
+            }
+            items(items = others, key = { it.id }) { note ->
+                NoteCard(
+                    note = note,
+                    isSelectionMode = isSelectionMode,
+                    isSelected = isSelected(note.id),
+                    onClick = { onClickNote(note.id) },
+                    onLongClick = { onLongPress(note.id) },
+                    onToggleSelected = { onToggleSelected(note.id) }
+                )
             }
         }
     }
 }
 
-/* -----------------------------------------------------------------------
- * Section header (grouping)
- * --------------------------------------------------------------------- */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun StaggeredNotesGrid(
+    pinned: List<NoteEntity>,
+    others: List<NoteEntity>,
+    staggeredGridState: androidx.compose.foundation.lazy.staggeredgrid.LazyStaggeredGridState,
+    isSelectionMode: Boolean,
+    isSelected: (Long) -> Boolean,
+    onClickNote: (Long) -> Unit,
+    onLongPress: (Long) -> Unit,
+    onToggleSelected: (Long) -> Unit
+) {
+    LazyVerticalStaggeredGrid(
+        state = staggeredGridState,
+        columns = StaggeredGridCells.Fixed(2),
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(
+            start = 12.dp, end = 12.dp, top = 8.dp, bottom = 96.dp
+        ),
+        verticalItemSpacing = 8.dp,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        if (pinned.isNotEmpty()) {
+            item(key = "section:pinned", span = StaggeredGridItemSpan.FullLine) {
+                SectionHeader("Pinned", pinned.size)
+            }
+            items(items = pinned, key = { it.id }) { note ->
+                NoteStaggeredCard(
+                    note = note,
+                    isSelectionMode = isSelectionMode,
+                    isSelected = isSelected(note.id),
+                    onClick = { onClickNote(note.id) },
+                    onLongClick = { onLongPress(note.id) },
+                    onToggleSelected = { onToggleSelected(note.id) }
+                )
+            }
+        }
+        if (others.isNotEmpty()) {
+            if (pinned.isNotEmpty()) {
+                item(key = "section:others", span = StaggeredGridItemSpan.FullLine) {
+                    SectionHeader("Others", others.size)
+                }
+            }
+            items(items = others, key = { it.id }) { note ->
+                NoteStaggeredCard(
+                    note = note,
+                    isSelectionMode = isSelectionMode,
+                    isSelected = isSelected(note.id),
+                    onClick = { onClickNote(note.id) },
+                    onLongClick = { onLongPress(note.id) },
+                    onToggleSelected = { onToggleSelected(note.id) }
+                )
+            }
+        }
+    }
+}
 
-/**
- * Header sub-line that reflects the most recent sync outcome:
- *   - "Syncing..." while a round-trip is in flight
- *   - "Last sync: just now / Xm ago / Xh ago" after success
- *   - "Offline" or "Sync failed" when the last attempt errored
- *   - (no row) when we have never synced AND there is no error
- */
+/* =====================================================================
+ *  Helpers
+ * ===================================================================== */
+
 @Composable
 private fun SyncStatusText(status: SyncStatus) {
     val text = when {
@@ -678,148 +686,420 @@ private fun SyncStatusText(status: SyncStatus) {
     )
 }
 
-/** Sticky-ish section header that sits at the TOP of each date group. */
 @Composable
-private fun SectionHeader(label: String) {
-    Text(
-        text = label,
-        style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        fontWeight = FontWeight.SemiBold,
+private fun SectionHeader(label: String, count: Int) {
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 8.dp, bottom = 4.dp)
+            .padding(top = 12.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontWeight = FontWeight.SemiBold
+        )
+        Text(
+            text = "$count",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+/* ----------------------------------------------------------------------- *
+ *  Empty states — drawn with `Canvas` in palette colors                   *
+ * ----------------------------------------------------------------------- */
+
+@Composable
+private fun EmptyStateFor(
+    filter: NotesFilter,
+    searchQuery: String,
+    isTrash: Boolean,
+    modifier: Modifier = Modifier
+) {
+    val hasQuery = searchQuery.isNotBlank()
+    val (heading, body, kind) = when {
+        hasQuery -> Triple(
+            "No matches",
+            "Try a different word, or clear the search.",
+            EmptyIllustrationKind.SEARCH
+        )
+        filter == NotesFilter.FAVORITES -> Triple(
+            "No favorites yet",
+            "Long-press a note and tap the star to add it here.",
+            EmptyIllustrationKind.FAVORITE
+        )
+        isTrash -> Triple(
+            "Trash is empty",
+            "Deleted notes show up here so you can restore them.",
+            EmptyIllustrationKind.TRASH
+        )
+        else -> Triple(
+            "Capture your first note",
+            "Tap the Compose button below to start writing.",
+            EmptyIllustrationKind.NOTE
+        )
+    }
+
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            modifier = Modifier
+                .size(192.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)),
+            contentAlignment = Alignment.Center
+        ) {
+            EmptyIllustration(kind)
+        }
+        Spacer(Modifier.height(16.dp))
+        Text(
+            text = heading,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = body,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+        )
+    }
+}
+
+private enum class EmptyIllustrationKind { NOTE, SEARCH, FAVORITE, TRASH }
+
+@Composable
+private fun EmptyIllustration(kind: EmptyIllustrationKind) {
+    val outline = MaterialTheme.colorScheme.onPrimaryContainer
+    val accent = MaterialTheme.colorScheme.primary
+    Canvas(modifier = Modifier.size(120.dp)) {
+        when (kind) {
+            EmptyIllustrationKind.NOTE -> drawNoteIllustration(accent, outline)
+            EmptyIllustrationKind.SEARCH -> drawSearchIllustration(accent, outline)
+            EmptyIllustrationKind.FAVORITE -> drawFavoriteIllustration(accent, outline)
+            EmptyIllustrationKind.TRASH -> drawTrashIllustration(accent, outline)
+        }
+    }
+}
+
+private fun DrawScope.drawNoteIllustration(accent: Color, outline: Color) {
+    val stroke = 4.dp.toPx()
+    val w = size.width
+    val h = size.height
+
+    drawRoundedCard(
+        fill = accent.copy(alpha = 0.30f),
+        outlineColor = outline.copy(alpha = 0.55f),
+        topLeft = Offset(w * 0.32f, h * 0.18f),
+        cardSize = Size(w * 0.62f, h * 0.78f),
+        cornerRadius = 14.dp.toPx(),
+        strokeWidth = stroke
+    )
+    drawRoundedCard(
+        fill = Color.White,
+        outlineColor = outline,
+        topLeft = Offset(w * 0.18f, h * 0.30f),
+        cardSize = Size(w * 0.62f, h * 0.62f),
+        cornerRadius = 16.dp.toPx(),
+        strokeWidth = stroke
+    )
+
+    val cx = w * 0.18f
+    val cy = h * 0.30f
+    val cw = w * 0.62f
+    val lineWidths = listOf(0.75f, 0.55f, 0.30f)
+    lineWidths.forEachIndexed { i, f ->
+        val y = cy + (h * 0.62f) * (0.30f + i * 0.16f)
+        drawLine(
+            color = outline.copy(alpha = 0.65f),
+            start = Offset(cx + cw * 0.12f, y),
+            end = Offset(cx + cw * (0.12f + f), y),
+            strokeWidth = 3.dp.toPx()
+        )
+    }
+}
+
+private fun DrawScope.drawSearchIllustration(accent: Color, outline: Color) {
+    val w = size.width
+    val h = size.height
+    val r = w * 0.30f
+    val cx = w * 0.46f
+    val cy = h * 0.46f
+
+    drawCircle(color = Color.White, radius = r, center = Offset(cx, cy))
+    drawCircle(
+        color = outline, radius = r, center = Offset(cx, cy),
+        style = Stroke(width = 4.dp.toPx())
+    )
+    drawLine(
+        color = outline,
+        start = Offset(cx + r * 0.7f, cy + r * 0.7f),
+        end = Offset(cx + r * 1.45f, cy + r * 1.45f),
+        strokeWidth = 5.dp.toPx()
+    )
+
+    val m = 4.dp.toPx()
+    drawLine(
+        color = accent,
+        start = Offset(cx - m * 4, cy - m * 4),
+        end = Offset(cx + m * 4, cy + m * 4),
+        strokeWidth = 4.dp.toPx()
+    )
+    drawLine(
+        color = accent,
+        start = Offset(cx + m * 4, cy - m * 4),
+        end = Offset(cx - m * 4, cy + m * 4),
+        strokeWidth = 4.dp.toPx()
     )
 }
 
-/* -----------------------------------------------------------------------
- * Note cards
- * --------------------------------------------------------------------- */
+private fun DrawScope.drawFavoriteIllustration(accent: Color, outline: Color) {
+    val w = size.width
+    val h = size.height
+    val cx = w / 2f
+    val cy = h / 2f
+    val outerR = w * 0.36f
+    val innerR = w * 0.16f
+    val pts = 5
 
-/**
- * Linear note card. Date / time are NO LONGER rendered inside the card —
- * the section header at the top of each group already conveys the date.
- * The card itself shows: title + thumbnail (first inline image if any) +
- * text excerpt. A star toggle is in the top-right corner.
- */
+    val path = Path()
+    for (i in 0 until pts * 2) {
+        val r = if (i % 2 == 0) outerR else innerR
+        val angle = Math.PI / 2 + i * Math.PI / pts
+        val px = cx + r * kotlin.math.cos(angle).toFloat()
+        val py = cy - r * kotlin.math.sin(angle).toFloat()
+        if (i == 0) path.moveTo(px, py) else path.lineTo(px, py)
+    }
+    path.close()
+
+    drawPath(path, Color.White)
+    drawPath(path, outline, style = Stroke(width = 4.dp.toPx()))
+    drawCircle(
+        color = accent.copy(alpha = 0.65f),
+        radius = innerR * 0.45f,
+        center = Offset(cx, cy)
+    )
+}
+
+private fun DrawScope.drawTrashIllustration(accent: Color, outline: Color) {
+    val w = size.width
+    val h = size.height
+    val lidY = h * 0.32f
+    val bodyTop = h * 0.42f
+    val bodyBottom = h * 0.86f
+    val lidW = w * 0.62f
+    val lidX = (w - lidW) / 2f
+    val bodyW = w * 0.50f
+    val bodyX = (w - bodyW) / 2f
+
+    drawRoundRect(
+        color = outline,
+        topLeft = Offset(lidX, lidY - 6.dp.toPx()),
+        size = Size(lidW, 8.dp.toPx()),
+        cornerRadius = CornerRadius(4.dp.toPx())
+    )
+    drawRoundRect(
+        color = outline,
+        topLeft = Offset(w / 2f - w * 0.10f, lidY - 18.dp.toPx()),
+        size = Size(w * 0.20f, 8.dp.toPx()),
+        cornerRadius = CornerRadius(4.dp.toPx())
+    )
+
+    drawLine(
+        color = outline,
+        start = Offset(bodyX, bodyTop),
+        end = Offset(bodyX + bodyW, bodyTop),
+        strokeWidth = 4.dp.toPx()
+    )
+    drawLine(
+        color = outline,
+        start = Offset(bodyX, bodyTop),
+        end = Offset(bodyX + bodyW * 0.06f, bodyBottom),
+        strokeWidth = 4.dp.toPx()
+    )
+    drawLine(
+        color = outline,
+        start = Offset(bodyX + bodyW, bodyTop),
+        end = Offset(bodyX + bodyW * 0.94f, bodyBottom),
+        strokeWidth = 4.dp.toPx()
+    )
+    drawLine(
+        color = outline,
+        start = Offset(bodyX + bodyW * 0.06f, bodyBottom),
+        end = Offset(bodyX + bodyW * 0.94f, bodyBottom),
+        strokeWidth = 4.dp.toPx()
+    )
+
+    val creases = listOf(0.32f, 0.50f, 0.68f)
+    creases.forEach { f ->
+        val x = bodyX + bodyW * f
+        drawLine(
+            color = outline.copy(alpha = 0.55f),
+            start = Offset(x, bodyTop + 6.dp.toPx()),
+            end = Offset(x, bodyBottom - 6.dp.toPx()),
+            strokeWidth = 3.dp.toPx()
+        )
+    }
+
+    drawCircle(
+        color = accent.copy(alpha = 0.50f),
+        radius = 14.dp.toPx(),
+        center = Offset(w / 2f, h * 0.55f)
+    )
+}
+
+private fun DrawScope.drawRoundedCard(
+    fill: Color,
+    outlineColor: Color,
+    topLeft: Offset,
+    cardSize: Size,
+    cornerRadius: Float,
+    strokeWidth: Float
+) {
+    drawRoundRect(
+        color = fill,
+        topLeft = topLeft,
+        size = cardSize,
+        cornerRadius = CornerRadius(cornerRadius, cornerRadius)
+    )
+    drawRoundRect(
+        color = outlineColor,
+        topLeft = topLeft,
+        size = cardSize,
+        cornerRadius = CornerRadius(cornerRadius, cornerRadius),
+        style = Stroke(width = strokeWidth)
+    )
+}
+
+/* =====================================================================
+ *  Pill search bar
+ * ===================================================================== */
+
+@Composable
+private fun SearchPillField(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    focusRequester: FocusRequester,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier,
+        shape = MaterialTheme.shapes.extraLarge,
+        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+        contentColor = MaterialTheme.colorScheme.onSurface
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Search,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(18.dp)
+            )
+            TextField(
+                value = query,
+                onValueChange = onQueryChange,
+                placeholder = {
+                    Text(
+                        "Search notes...",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                },
+                singleLine = true,
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = Color.Transparent,
+                    unfocusedContainerColor = Color.Transparent,
+                    focusedIndicatorColor = Color.Transparent,
+                    unfocusedIndicatorColor = Color.Transparent,
+                    disabledContainerColor = Color.Transparent,
+                    disabledIndicatorColor = Color.Transparent,
+                    cursorColor = MaterialTheme.colorScheme.primary,
+                    focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                    unfocusedTextColor = MaterialTheme.colorScheme.onSurface
+                ),
+                textStyle = TextStyle(
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Normal
+                ),
+                trailingIcon = {
+                    if (query.isNotEmpty()) {
+                        IconButton(onClick = { onQueryChange("") }) {
+                            Icon(
+                                imageVector = Icons.Filled.Close,
+                                contentDescription = "Clear search"
+                            )
+                        }
+                    }
+                },
+                modifier = Modifier
+                    .weight(1f)
+                    .focusRequester(focusRequester)
+            )
+        }
+    }
+}
+
+/* =====================================================================
+ *  Note cards — list & staggered grid
+ * ===================================================================== */
+
 @Composable
 private fun NoteCard(
     note: NoteEntity,
     isSelectionMode: Boolean,
     isSelected: Boolean,
     onClick: () -> Unit,
-    onToggleSelected: () -> Unit,
-    onToggleFavorite: () -> Unit,
-    onTogglePin: () -> Unit
+    onLongClick: () -> Unit,
+    onToggleSelected: () -> Unit
 ) {
-    val cardColor = noteCardColor(note.backgroundColor)
-    val firstImageUri = remember(note.id, note.imageUris, note.content) {
-        // Prefer the legacy V5 imageUris column; fall back to parsing the
-        // V6 content tokens.
-        note.imageUris
-            .substringBefore("|||")
-            .takeIf { it.isNotBlank() && it != note.imageUris }
-            ?: note.imageUris.takeIf { it.isNotBlank() && !it.contains("|||") }
-            ?: extractFirstImageUriFromContent(note.content)
-    }
-    val plainExcerpt = remember(note.content) {
-        // V2.6 content is wrapped in `<s|a|l|k>S<ranges>…` headers; show
-        // the readable plain text in the list, not the serialized form.
-        val blocks = parseBlocksFromContent(note.content)
-        blocksToPlainText(blocks)
-    }
-
-    Card(
+    NoteCardContainer(
+        note = note,
+        isSelectionMode = isSelectionMode,
+        isSelected = isSelected,
         onClick = onClick,
-        modifier = Modifier
-            .fillMaxWidth()
-            .then(
-                if (isSelected) Modifier.border(
-                    2.dp,
-                    MaterialTheme.colorScheme.primary,
-                    RoundedCornerShape(12.dp)
-                ) else Modifier
-            ),
-        colors = CardDefaults.cardColors(containerColor = cardColor),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-    ) {
+        onLongClick = onLongClick
+    ) { onColor, firstImageUri, plainExcerpt ->
         Column(modifier = Modifier.padding(16.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = note.title.ifBlank { "Untitled" },
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
+            NoteCardHeader(
+                title = note.title,
+                isPinned = note.isPinned,
+                isSelectionMode = isSelectionMode,
+                isSelected = isSelected,
+                onColor = onColor,
+                titleStyle = MaterialTheme.typography.titleMedium,
+                maxLines = 1,
+                pinIconSize = 16.dp,
+                onToggleSelected = onToggleSelected
+            )
 
-                if (isSelectionMode) {
-                    Checkbox(
-                        checked = isSelected,
-                        onCheckedChange = { onToggleSelected() }
-                    )
-                } else {
-                    // V4.5: pin toggle sits to the left of the star so the
-                    // pinned-vs-favorite action order reads naturally.
-                    IconButton(
-                        onClick = onTogglePin,
-                        modifier = Modifier.size(32.dp)
-                    ) {
-                        Icon(
-                            imageVector = if (note.isPinned)
-                                Icons.Filled.PushPin
-                            else
-                                Icons.Outlined.PushPin,
-                            contentDescription = if (note.isPinned) "Unpin" else "Pin",
-                            tint = if (note.isPinned)
-                                MaterialTheme.colorScheme.primary
-                            else
-                                MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                    IconButton(
-                        onClick = onToggleFavorite,
-                        modifier = Modifier.size(32.dp)
-                    ) {
-                        Icon(
-                            imageVector = if (note.isFavorite)
-                                Icons.Filled.Star
-                            else
-                                Icons.Filled.StarBorder,
-                            contentDescription = if (note.isFavorite) "Unfavorite" else "Favorite",
-                            tint = if (note.isFavorite)
-                                MaterialTheme.colorScheme.primary
-                            else
-                                MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                }
-            }
+            Spacer(Modifier.height(8.dp))
 
-            Spacer(Modifier.height(4.dp))
-
-            // Thumbnail (if there's an image) shown to the left of the text
-            // excerpt.
             if (firstImageUri != null) {
                 Row(verticalAlignment = Alignment.Top) {
                     ThumbnailImage(
                         uriString = firstImageUri,
                         modifier = Modifier
                             .size(56.dp)
-                            .padding(end = 8.dp)
+                            .padding(end = 12.dp)
                     )
                     Text(
                         text = plainExcerpt.ifBlank { "No content" },
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
-                        maxLines = 2,
+                        color = onColor.copy(alpha = 0.75f),
+                        maxLines = 4,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f)
                     )
@@ -828,16 +1108,208 @@ private fun NoteCard(
                 Text(
                     text = plainExcerpt.ifBlank { "No content" },
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
-                    maxLines = 2,
+                    color = onColor.copy(alpha = 0.75f),
+                    maxLines = 6,
                     overflow = TextOverflow.Ellipsis
                 )
             }
+
+            Spacer(Modifier.height(8.dp))
+
+            NoteCardFooter(
+                updatedAt = note.updatedAt,
+                isFavorite = note.isFavorite,
+                isSelectionMode = isSelectionMode,
+                onColor = onColor,
+                starSize = 14.dp
+            )
         }
     }
 }
 
-/** Pull the first inline image URI out of a serialized content string. */
+@Composable
+private fun NoteStaggeredCard(
+    note: NoteEntity,
+    isSelectionMode: Boolean,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    onToggleSelected: () -> Unit
+) {
+    NoteCardContainer(
+        note = note,
+        isSelectionMode = isSelectionMode,
+        isSelected = isSelected,
+        onClick = onClick,
+        onLongClick = onLongClick
+    ) { onColor, firstImageUri, plainExcerpt ->
+        Column(modifier = Modifier.padding(14.dp)) {
+            NoteCardHeader(
+                title = note.title,
+                isPinned = note.isPinned,
+                isSelectionMode = isSelectionMode,
+                isSelected = isSelected,
+                onColor = onColor,
+                titleStyle = MaterialTheme.typography.titleSmall,
+                maxLines = 2,
+                pinIconSize = 14.dp,
+                onToggleSelected = onToggleSelected
+            )
+
+            if (firstImageUri != null) {
+                Spacer(Modifier.height(8.dp))
+                ThumbnailImage(
+                    uriString = firstImageUri,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(96.dp)
+                )
+            }
+
+            Spacer(Modifier.height(8.dp))
+
+            Text(
+                text = plainExcerpt.ifBlank { "No content" },
+                style = MaterialTheme.typography.bodySmall,
+                color = onColor.copy(alpha = 0.75f),
+                maxLines = 6,
+                overflow = TextOverflow.Ellipsis
+            )
+
+            Spacer(Modifier.height(8.dp))
+
+            NoteCardFooter(
+                updatedAt = note.updatedAt,
+                isFavorite = note.isFavorite,
+                isSelectionMode = isSelectionMode,
+                onColor = onColor,
+                starSize = 13.dp
+            )
+        }
+    }
+}
+
+@Composable
+private fun NoteCardContainer(
+    note: NoteEntity,
+    isSelectionMode: Boolean,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    content: @Composable (onColor: Color, firstImageUri: String?, plainExcerpt: String) -> Unit
+) {
+    val cardColor = noteCardColor(note.backgroundColor)
+    val onColor = noteCardOnColor(note.backgroundColor)
+    val firstImageUri = remember(note.id, note.imageUris, note.content) {
+        note.imageUris
+            .substringBefore("|||")
+            .takeIf { it.isNotBlank() && it != note.imageUris }
+            ?: note.imageUris.takeIf { it.isNotBlank() && !it.contains("|||") }
+            ?: extractFirstImageUriFromContent(note.content)
+    }
+    val plainExcerpt = remember(note.content) {
+        val blocks = parseBlocksFromContent(note.content)
+        blocksToPlainText(blocks)
+    }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.large)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick
+            ),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = cardColor, contentColor = onColor),
+        border = BorderStroke(
+            width = if (isSelected) 2.dp else 1.dp,
+            color = if (isSelected)
+                MaterialTheme.colorScheme.primary
+            else MaterialTheme.colorScheme.outlineVariant
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    ) {
+        content(onColor, firstImageUri, plainExcerpt)
+    }
+}
+
+@Composable
+private fun NoteCardHeader(
+    title: String,
+    isPinned: Boolean,
+    isSelectionMode: Boolean,
+    isSelected: Boolean,
+    onColor: Color,
+    titleStyle: TextStyle,
+    maxLines: Int,
+    pinIconSize: androidx.compose.ui.unit.Dp,
+    onToggleSelected: () -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.Top
+    ) {
+        Text(
+            text = title.ifBlank { "Untitled" },
+            style = titleStyle,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = maxLines,
+            overflow = TextOverflow.Ellipsis,
+            color = onColor,
+            modifier = Modifier.weight(1f)
+        )
+        if (isSelectionMode) {
+            Checkbox(
+                checked = isSelected,
+                onCheckedChange = { onToggleSelected() }
+            )
+        } else if (isPinned) {
+            Icon(
+                imageVector = Icons.Filled.PushPin,
+                contentDescription = "Pinned",
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(pinIconSize)
+            )
+        }
+    }
+}
+
+@Composable
+private fun NoteCardFooter(
+    updatedAt: Long,
+    isFavorite: Boolean,
+    isSelectionMode: Boolean,
+    onColor: Color,
+    starSize: androidx.compose.ui.unit.Dp
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = formatDateShort(updatedAt),
+            style = MaterialTheme.typography.labelSmall,
+            color = onColor.copy(alpha = 0.65f)
+        )
+        if (isFavorite && !isSelectionMode) {
+            Icon(
+                imageVector = Icons.Filled.Star,
+                contentDescription = "Favorite",
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(starSize)
+            )
+        }
+    }
+}
+
+private fun formatDateShort(ts: Long): String {
+    val fmt = SimpleDateFormat("MMM d", Locale.getDefault())
+    return fmt.format(Date(ts))
+}
+
 private fun extractFirstImageUriFromContent(raw: String): String? {
     if (raw.isBlank()) return null
     val tokenIdx = raw.indexOf("\n|||IMG:")
@@ -848,17 +1320,12 @@ private fun extractFirstImageUriFromContent(raw: String): String? {
     return raw.substring(uriStart, endIdx)
 }
 
-/** Lightweight thumbnail (no special caching — list cards stay snappy). */
 @Composable
 private fun ThumbnailImage(uriString: String, modifier: Modifier = Modifier) {
-    // V5.2.3 — decode off the UI thread so an https:// thumbnail for a
-    // freshly-uploaded note can't freeze the list when the network is
-    // slow. The previous implementation did the read inside
-    // `remember { … }` on the main thread.
     val bitmap = com.example.notes.ui.util.rememberLoadedImage(uriString)
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(6.dp))
+            .clip(RoundedCornerShape(12.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant),
         contentAlignment = Alignment.Center
     ) {
@@ -880,80 +1347,80 @@ private fun ThumbnailImage(uriString: String, modifier: Modifier = Modifier) {
     }
 }
 
+/* =====================================================================
+ *  Long-press bottom sheet
+ * ===================================================================== */
+
 @Composable
-private fun NoteGridCard(
+private fun NoteActionsSheet(
     note: NoteEntity,
-    isSelectionMode: Boolean,
-    isSelected: Boolean,
-    onClick: () -> Unit,
-    onToggleFavorite: () -> Unit
+    onTogglePin: () -> Unit,
+    onToggleFavorite: () -> Unit,
+    onDelete: () -> Unit,
+    isTrashContext: Boolean
 ) {
-    val cardColor = noteCardColor(note.backgroundColor)
-    Card(
-        onClick = onClick,
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .aspectRatio(1f)
-            .then(
-                if (isSelected) Modifier.border(
-                    2.dp,
-                    MaterialTheme.colorScheme.primary,
-                    RoundedCornerShape(12.dp)
-                ) else Modifier
-            ),
-        colors = CardDefaults.cardColors(containerColor = cardColor),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+            .padding(horizontal = 24.dp)
+            .padding(top = 8.dp, bottom = 24.dp)
     ) {
-        Column(modifier = Modifier.padding(12.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = note.title.ifBlank { "Untitled" },
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
-                if (isSelectionMode) {
-                    Checkbox(
-                        checked = isSelected,
-                        onCheckedChange = { onClick() }
-                    )
-                } else {
-                    IconButton(
-                        onClick = onToggleFavorite,
-                        modifier = Modifier.size(28.dp)
-                    ) {
-                        Icon(
-                            imageVector = if (note.isFavorite)
-                                Icons.Filled.Star
-                            else
-                                Icons.Filled.StarBorder,
-                            contentDescription = if (note.isFavorite) "Unfavorite" else "Favorite",
-                            tint = if (note.isFavorite)
-                                MaterialTheme.colorScheme.primary
-                            else
-                                MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                }
-            }
-            Spacer(Modifier.height(4.dp))
-            val plainExcerpt = remember(note.content) {
-                val blocks = parseBlocksFromContent(note.content)
-                blocksToPlainText(blocks)
-            }
+        Text(
+            text = note.title.ifBlank { "Untitled" },
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Spacer(Modifier.height(16.dp))
+
+        BottomSheetAction(
+            icon = if (note.isPinned) Icons.Outlined.PushPin else Icons.Filled.PushPin,
+            label = if (note.isPinned) "Unpin" else "Pin",
+            onClick = onTogglePin
+        )
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        BottomSheetAction(
+            icon = if (note.isFavorite) Icons.Filled.Star else Icons.Filled.StarBorder,
+            label = if (note.isFavorite) "Remove from favorites" else "Add to favorites",
+            onClick = onToggleFavorite
+        )
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        BottomSheetAction(
+            icon = Icons.Filled.Delete,
+            label = if (isTrashContext) "Delete permanently" else "Move to trash",
+            tint = MaterialTheme.colorScheme.error,
+            onClick = onDelete
+        )
+    }
+}
+
+@Composable
+private fun BottomSheetAction(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    onClick: () -> Unit,
+    tint: Color = MaterialTheme.colorScheme.onSurface
+) {
+    Surface(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        color = Color.Transparent,
+        contentColor = tint
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Icon(imageVector = icon, contentDescription = null)
             Text(
-                text = plainExcerpt.ifBlank { "No content" },
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
-                maxLines = 4,
-                overflow = TextOverflow.Ellipsis
+                text = label,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Medium
             )
         }
     }

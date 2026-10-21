@@ -1,6 +1,7 @@
 package com.example.notes.ui.notes
 
 import android.app.Application
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -8,6 +9,7 @@ import com.example.notes.NotesApplication
 import com.example.notes.data.local.NoteEntity
 import com.example.notes.data.remote.NotesSyncRepository
 import com.example.notes.data.repository.NoteRepository
+import com.example.notes.ui.util.ImagePrefetcher
 import com.example.notes.util.Logger
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -15,6 +17,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.launch
+
+private val httpUrlRegex = Regex("""https?://[^\s"\'|<>]+""")
 
 enum class NotesFilter {
     ALL, FAVORITES, TRASH
@@ -28,24 +32,13 @@ enum class NotesSort {
     UPDATED_DESC, CREATED_DESC, TITLE_ASC
 }
 
-/**
- * V5.0.2 — apply the secondary sort chosen by [NotesSort] to a list that
- * has already been ordered by the DAO. Pinned-first is preserved because
- * the SQL query keeps `isPinned DESC` ahead of any secondary key.
- */
 private fun sortNotes(list: List<NoteEntity>, sort: NotesSort): List<NoteEntity> =
     when (sort) {
-        NotesSort.UPDATED_DESC -> list // DAO already returns updatedAt DESC
+        NotesSort.UPDATED_DESC -> list
         NotesSort.CREATED_DESC -> list.sortedByDescending { it.createdAt }
         NotesSort.TITLE_ASC -> list.sortedBy { it.title.lowercase() }
     }
 
-/**
- * Sync UI state surfaced in the notes list header. [syncing] is true while a
- * round-trip is in flight; [lastSyncAgoMs] is the millisecond delta since
- * the last successful sync (null = never); [error] is non-null when the
- * most recent sync attempt failed (e.g. offline, server error).
- */
 data class SyncStatus(
     val syncing: Boolean = false,
     val lastSyncAgoMs: Long? = null,
@@ -55,8 +48,11 @@ data class SyncStatus(
 @OptIn(ExperimentalCoroutinesApi::class)
 class NotesListViewModel(
     private val repository: NoteRepository,
-    private val syncRepository: NotesSyncRepository
+    private val syncRepository: NotesSyncRepository,
+    private val appContext: Context? = null
 ) : ViewModel() {
+
+
 
     private val _filter = MutableStateFlow(NotesFilter.ALL)
     val filter: StateFlow<NotesFilter> = _filter.asStateFlow()
@@ -113,6 +109,14 @@ class NotesListViewModel(
                 }
             }.collect { list ->
                 _notes.value = list
+                if (appContext != null && list.isNotEmpty()) {
+                    val allUris = list.flatMap { note ->
+                        val fromField = if (note.imageUris.isNotBlank()) note.imageUris.split("|||") else emptyList()
+                        val fromBody = httpUrlRegex.findAll(note.content).map { it.value }.toList()
+                        fromField + fromBody
+                    }
+                    ImagePrefetcher.prefetch(appContext, allUris)
+                }
             }
         }
 
@@ -122,7 +126,11 @@ class NotesListViewModel(
                 _noteCount.value = count
             }
         }
+
+        // Auto-sync notes on screen load
+        syncNow()
     }
+
 
     fun setFilter(filter: NotesFilter) {
         _filter.value = filter
@@ -282,7 +290,7 @@ class NotesListViewModel(
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
             if (modelClass.isAssignableFrom(NotesListViewModel::class.java)) {
                 val app = application as NotesApplication
-                return NotesListViewModel(repository, app.syncRepository) as T
+                return NotesListViewModel(repository, app.syncRepository, app.applicationContext) as T
             }
             throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
         }

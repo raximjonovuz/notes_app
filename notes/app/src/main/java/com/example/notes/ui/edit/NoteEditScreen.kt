@@ -6,6 +6,7 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -65,6 +66,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.IconButton
@@ -76,6 +78,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -444,9 +447,7 @@ fun NoteEditScreen(
                         onValueChange = viewModel::onTitleChange,
                         singleLine = true,
                         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                        textStyle = TextStyle(
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.SemiBold,
+                        textStyle = MaterialTheme.typography.headlineMedium.copy(
                             color = MaterialTheme.colorScheme.onBackground
                         ),
                         // Disable autocomplete so the IME never injects
@@ -463,10 +464,7 @@ fun NoteEditScreen(
                                 if (state.title.isEmpty()) {
                                     Text(
                                         text = "Untitled",
-                                        style = TextStyle(
-                                            fontSize = 20.sp,
-                                            fontWeight = FontWeight.SemiBold
-                                        ),
+                                        style = MaterialTheme.typography.headlineMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
@@ -603,40 +601,48 @@ onClick = {
                 .fillMaxSize()
                 .padding(innerPadding)
                 .background(notesPageBackground())
-                .padding(horizontal = 16.dp, vertical = 12.dp)
+                .padding(horizontal = 16.dp, vertical = 16.dp)
                 .imePadding()
         ) {
-            // Note card with INLINE blocks
-            Column(
+            // Note card with INLINE blocks. V6: roomier — 20dp radius,
+            // 20/16 internal padding, no heavy shadow (a thin
+            // outlineVariant border separates it from the page).
+            Surface(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(cardBg)
-                    .padding(horizontal = 16.dp, vertical = 12.dp)
-            ) {
-                BlocksEditor(
-                    blocks = state.blocks,
-                    activeBlockId = state.activeBlockId,
-                    onBlockValueChange = viewModel::onBlockValueChange,
-                    onBlockFocused = viewModel::onBlockFocused,
-                    onToggleChecklistLine = { blockId, lineIndex ->
-                        viewModel.toggleChecklistLine(blockId, lineIndex)
-                    },
-                    onRemoveImage = { blockId -> viewModel.removeImageBlock(blockId) },
-                    onTapImage = { uri -> fullScreenImageUri = uri },
-                    failedImageUris = failedImageUris,
-                    onRetryImageUpload = { uri -> viewModel.retryImageUpload(uri) },
-                    autoFocusFirstBlock = true,
-                    autoFocusRequester = firstBlockFocusRequester
+                    .weight(1f),
+                shape = RoundedCornerShape(20.dp),
+                color = cardBg,
+                contentColor = MaterialTheme.colorScheme.onSurface,
+                border = BorderStroke(
+                    width = 1.dp,
+                    color = MaterialTheme.colorScheme.outlineVariant
                 )
+            ) {
+                Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 20.dp)) {
+                    BlocksEditor(
+                        blocks = state.blocks,
+                        activeBlockId = state.activeBlockId,
+                        onBlockValueChange = viewModel::onBlockValueChange,
+                        onBlockFocused = viewModel::onBlockFocused,
+                        onToggleChecklistLine = { blockId, lineIndex ->
+                            viewModel.toggleChecklistLine(blockId, lineIndex)
+                        },
+                        onRemoveImage = { blockId -> viewModel.removeImageBlock(blockId) },
+                        onTapImage = { uri -> fullScreenImageUri = uri },
+                        failedImageUris = failedImageUris,
+                        onRetryImageUpload = { uri -> viewModel.retryImageUpload(uri) },
+                        autoFocusFirstBlock = true,
+                        autoFocusRequester = firstBlockFocusRequester
+                    )
+                }
             }
 
-            // ----- V4.3.1 classic 2-row toolbar -----
-            // Row 1: B | I | U | | A− Aa A+ | | L C R | | A color
-            // Row 2: ≡ | ☰ | ☑ | | Bg | Img
-            // Tapping a list button while it's already active clears it,
-            // matching Notion/Bear behaviour.
+            Spacer(Modifier.height(8.dp))
+
+            // V6: the formatting toolbar stays docked above the keyboard
+            // (the screen Column has `imePadding()`, so the toolbar —
+            // which is the last child — rises with the IME).
             EditorToolbar(
                 activeFontSize = activeFontSize,
                 isBoldActive = isBoldActive,
@@ -666,40 +672,66 @@ onClick = {
                 onIncreaseSizeClick = viewModel::increaseTextSize,
                 onShowTextColorPicker = { textColorPickerVisible = true }
             )
+        }
+    }
 
-            // Background-color swatch popup.
-            Box {
-                Spacer(Modifier.size(1.dp))
-                DropdownMenu(
-                    expanded = bgColorPickerVisible,
-                    onDismissRequest = { bgColorPickerVisible = false }
-                ) {
-                    BackgroundColorSwatchRowContent(
-                        currentIndex = state.backgroundColor,
-                        onSelect = { index ->
-                            viewModel.setBackgroundColorIndex(index)
-                            bgColorPickerVisible = false
-                        }
-                    )
+    // ----- V6: color pickers live in bottom sheets, not dropdowns -----
+    // Both sheets are hosted above the rest of the UI so they share the
+    // same blur/scrim behaviour; they only mount while the user is
+    // choosing a color, so the active block's lifecycle is unaffected.
+    if (bgColorPickerVisible) {
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ModalBottomSheet(
+            onDismissRequest = { bgColorPickerVisible = false },
+            sheetState = sheetState,
+            containerColor = MaterialTheme.colorScheme.surfaceContainer,
+            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+        ) {
+            ColorPickerSheet(
+                title = "Note color",
+                swatches = listOf(
+                    "Default" to noteCardColor(0),
+                    "Yellow" to noteCardColor(1),
+                    "Blue" to noteCardColor(2),
+                    "Pink" to noteCardColor(3),
+                    "Green" to noteCardColor(4),
+                    "Orange" to noteCardColor(5),
+                    "Purple" to noteCardColor(6),
+                    "Red" to noteCardColor(7)
+                ),
+                currentIndex = state.backgroundColor,
+                onSelect = { index ->
+                    viewModel.setBackgroundColorIndex(index)
+                    bgColorPickerVisible = false
                 }
-            }
+            )
+        }
+    }
 
-            // Text-color swatch popup.
-            Box {
-                Spacer(Modifier.size(1.dp))
-                DropdownMenu(
-                    expanded = textColorPickerVisible,
-                    onDismissRequest = { textColorPickerVisible = false }
-                ) {
-                    TextColorSwatchRowContent(
-                        currentIndex = activeTextColor,
-                        onSelect = { index ->
-                            viewModel.setTextColorIndex(index)
-                            textColorPickerVisible = false
-                        }
-                    )
+    if (textColorPickerVisible) {
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ModalBottomSheet(
+            onDismissRequest = { textColorPickerVisible = false },
+            sheetState = sheetState,
+            containerColor = MaterialTheme.colorScheme.surfaceContainer,
+            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+        ) {
+            ColorPickerSheet(
+                title = "Text color",
+                swatches = listOf(
+                    "Auto" to MaterialTheme.colorScheme.onSurface,
+                    "Red" to textColorFor(1),
+                    "Green" to textColorFor(2),
+                    "Blue" to textColorFor(3),
+                    "Purple" to textColorFor(4),
+                    "Orange" to textColorFor(5)
+                ),
+                currentIndex = activeTextColor,
+                onSelect = { index ->
+                    viewModel.setTextColorIndex(index)
+                    textColorPickerVisible = false
                 }
-            }
+            )
         }
     }
 }
@@ -1720,66 +1752,67 @@ private fun FullScreenImageViewer(
  * --------------------------------------------------------------------- */
 
 @Composable
-private fun BackgroundColorSwatchRowContent(
+private fun ColorPickerSheet(
+    title: String,
+    swatches: List<Pair<String, Color>>,
     currentIndex: Int,
     onSelect: (Int) -> Unit
 ) {
-    // V4.5: 8 background colors. The first entry is the default (no tint)
-    // and the rest map 1:1 to the indexes in [noteCardColor].
-    val swatches = listOf(
-        "Default" to noteCardColor(0),
-        "Yellow" to noteCardColor(1),
-        "Blue" to noteCardColor(2),
-        "Pink" to noteCardColor(3),
-        "Green" to noteCardColor(4),
-        "Orange" to noteCardColor(5),
-        "Purple" to noteCardColor(6),
-        "Red" to noteCardColor(7)
-    )
-    Row(
+    // V6 — bottom-sheet color picker. Header row + 4-up grid of round
+    // swatches. The selected swatch gets both a thick primary border
+    // AND a centered check icon so it's unmistakable even for users
+    // with reduced color vision.
+    val rows = swatches.chunked(4)
+    Column(
         modifier = Modifier
-            .padding(horizontal = 12.dp, vertical = 8.dp)
-            .horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp, vertical = 16.dp)
+            .padding(bottom = 24.dp)
     ) {
-        swatches.forEachIndexed { index, (label, color) ->
-            ColorSwatch(
-                color = color,
-                label = label,
-                selected = currentIndex == index,
-                onClick = { onSelect(index) }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                text = swatches.getOrNull(currentIndex)?.first ?: "",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary
             )
         }
-    }
-}
-
-@Composable
-private fun TextColorSwatchRowContent(
-    currentIndex: Int,
-    onSelect: (Int) -> Unit
-) {
-    val autoColor = MaterialTheme.colorScheme.onSurface
-    val swatches = listOf(
-        "Auto" to autoColor,
-        "Red" to textColorFor(1),
-        "Green" to textColorFor(2),
-        "Blue" to textColorFor(3),
-        "Purple" to textColorFor(4),
-        "Orange" to textColorFor(5)
-    )
-    Row(
-        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        swatches.forEachIndexed { index, (label, color) ->
-            ColorSwatch(
-                color = color,
-                label = label,
-                selected = currentIndex == index,
-                onClick = { onSelect(index) }
-            )
+        Spacer(Modifier.height(16.dp))
+        rows.forEachIndexed { rowIdx, row ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(20.dp)
+            ) {
+                row.forEachIndexed { colIdx, (label, color) ->
+                    val index = rowIdx * 4 + colIdx
+                    ColorSwatch(
+                        color = color,
+                        label = label,
+                        selected = currentIndex == index,
+                        onClick = { onSelect(index) },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                // Pad the last row to keep swatches aligned when the
+                // row has fewer than 4 entries (8 colors → 4+4, but
+                // helper stays generic for the 6-row text-color sheet).
+                if (row.size < 4) {
+                    repeat(4 - row.size) {
+                        Spacer(modifier = Modifier.weight(1f))
+                    }
+                }
+            }
         }
     }
 }
@@ -1789,30 +1822,57 @@ private fun ColorSwatch(
     color: Color,
     label: String,
     selected: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     Column(
+        modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(4.dp)
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Box(
             modifier = Modifier
-                .size(40.dp)
+                .size(48.dp)
                 .clip(CircleShape)
                 .background(color)
                 .border(
                     width = if (selected) 3.dp else 1.dp,
                     color = if (selected) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                    else MaterialTheme.colorScheme.outline,
                     shape = CircleShape
                 )
-                .clickable(onClick = onClick)
-        )
+                .clickable(onClick = onClick),
+            contentAlignment = Alignment.Center
+        ) {
+            if (selected) {
+                val onColor = if (isLight(color)) Color(0xFF0B2B26) else Color(0xFFDAF1DE)
+                Icon(
+                    imageVector = Icons.Filled.Check,
+                    contentDescription = "Selected",
+                    tint = onColor,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+        }
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurface
         )
     }
+}
+
+/**
+ * Returns true when [c] is bright enough to take the dark M3 on-color
+ * (#0B2B26) instead of the light one (#DAF1DE). Used by the color
+ * picker so the check icon stays legible against any swatch.
+ */
+private fun isLight(c: Color): Boolean {
+    val r = c.red
+    val g = c.green
+    val b = c.blue
+    // perceptual luminance
+    val lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
+    return lum > 0.55f
 }
 

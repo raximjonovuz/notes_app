@@ -105,6 +105,10 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+    kotlin {
+        jvmToolchain(21)
+    }
+
     buildFeatures {
         compose = true
         // V4.4: enable BuildConfig so log calls can check BuildConfig.DEBUG
@@ -140,6 +144,11 @@ dependencies {
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
+    // Theme — `ui-text-google-fonts` enables `GoogleFont` + the Play Services
+    // font provider for the Inter typography system. Without this dependency
+    // Compose's `GoogleFont` constructor and `Font(googleFont, …)` overloads
+    // don't resolve.
+    implementation(libs.androidx.compose.ui.text.google.fonts)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
