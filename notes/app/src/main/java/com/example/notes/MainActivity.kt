@@ -4,12 +4,19 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.NoteAlt
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
@@ -28,6 +35,7 @@ import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
@@ -155,23 +163,79 @@ private fun AppScreen(repository: NoteRepository, application: NotesApplication)
             // drawerState.close() when the area not covered by
             // drawerContent is tapped).
             drawerContent = {
+                val context = androidx.compose.ui.platform.LocalContext.current
+                val activeEmail = remember {
+                    com.example.notes.data.local.AuthStore.getActive(context)?.email ?: "raximjonozod1727@gmail.com"
+                }
                 ModalDrawerSheet(
                     modifier = Modifier
-                        .width(drawerWidth)
-                        .fillMaxHeight()
+                        .width(minOf((configuration.screenWidthDp * 0.78f).dp, 320.dp))
+                        .fillMaxHeight(),
+                    drawerContainerColor = MaterialTheme.colorScheme.surface
                 ) {
                     Text(
                         text = "Notes",
-                        style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.padding(horizontal = 28.dp, vertical = 16.dp)
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 20.dp)
                     )
+
+                    // Account Card per V2-10
+                    Surface(
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        modifier = Modifier
+                            .padding(horizontal = 16.dp)
+                            .padding(bottom = 16.dp)
+                            .fillMaxWidth()
+                    ) {
+                        androidx.compose.foundation.layout.Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(12.dp)
+                        ) {
+                            androidx.compose.foundation.layout.Box(
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.primaryContainer),
+                                contentAlignment = androidx.compose.ui.Alignment.Center
+                            ) {
+                                Text(
+                                    text = activeEmail.take(1).uppercase(),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                            androidx.compose.foundation.layout.Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = activeEmail,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = "Synced · just now",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Icon(
+                                imageVector = androidx.compose.material.icons.Icons.Filled.Check,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
 
                     NavigationDrawerItem(
                         icon = { Icon(Icons.Filled.NoteAlt, contentDescription = null) },
                         label = { Text("All Notes", style = MaterialTheme.typography.bodyMedium) },
                         selected = currentRoute == Routes.NOTES_LIST,
                         onClick = {
-                            // Close the drawer on tap.
                             scope.launch { drawerState.close() }
                             if (currentRoute != Routes.NOTES_LIST) {
                                 navController.navigate(Routes.NOTES_LIST) {
@@ -209,6 +273,11 @@ private fun AppScreen(repository: NoteRepository, application: NotesApplication)
                     )
 
                     Spacer(modifier = Modifier.weight(1f))
+
+                    androidx.compose.material3.HorizontalDivider(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        color = MaterialTheme.colorScheme.outlineVariant
+                    )
 
                     NavigationDrawerItem(
                         icon = { Icon(Icons.Filled.Settings, contentDescription = null) },

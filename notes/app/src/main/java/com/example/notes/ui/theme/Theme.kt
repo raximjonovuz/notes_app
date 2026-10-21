@@ -308,11 +308,11 @@ fun noteCardColor(index: Int): Color {
         5 -> if (isDark) NoteColorOrangeDark else NoteColorOrange
         6 -> if (isDark) NoteColorPurpleDark else NoteColorPurple
         7 -> if (isDark) NoteColorRedDark else NoteColorRed
-        else -> if (isDark) NoteColorDefaultDark else NoteColorDefault
+        else -> if (isDark) Color(0xFF0F2B21) else Color(0xFFFFFFFF)
     }
 }
 
 @Composable
 fun noteCardOnColor(index: Int): Color {
-    return if (LocalNotesTheme.current.isDark) Mist100 else Forest950
+    return if (LocalNotesTheme.current.isDark) Color(0xFFE9F1ED) else Color(0xFF14231D)
 }

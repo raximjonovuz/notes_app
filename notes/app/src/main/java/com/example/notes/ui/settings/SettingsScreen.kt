@@ -1,10 +1,7 @@
 package com.example.notes.ui.settings
 
 import android.app.Application
-import android.net.Uri
 import android.os.Build
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -28,7 +25,6 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Person
@@ -44,8 +40,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -56,7 +50,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -74,10 +67,6 @@ import com.example.notes.ui.auth.AuthViewModel
 import com.example.notes.ui.theme.ThemeManager
 import com.example.notes.ui.theme.ThemeMode
 import com.example.notes.ui.theme.notesHeaderBackground
-import com.example.notes.util.BackupExporter
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 /* =====================================================================
  *  V6 — Theme redesign · Settings
@@ -114,43 +103,6 @@ fun SettingsScreen(
     // Confirmation dialogs
     var showLogoutAllDialog by remember { mutableStateOf(false) }
     var showLogoutOneDialog by remember { mutableStateOf<String?>(null) }
-    // V5.1.5 — backup status feedback rendered right under the button
-    var lastBackupStatus by remember { mutableStateOf<String?>(null) }
-    val backupSnackbar = remember { SnackbarHostState() }
-    val suggestedBackupName = remember { BackupExporter.suggestFileName() }
-
-    val scope = rememberCoroutineScope()
-    val appContext = context.applicationContext
-    val notesDao = remember(appContext) {
-        (appContext as com.example.notes.NotesApplication).database.noteDao()
-    }
-    val exportJsonLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("application/json")
-    ) { target: Uri? ->
-        if (target == null) return@rememberLauncherForActivityResult
-        scope.launch {
-            lastBackupStatus = "Exporting…"
-            try {
-                val backupUserId = com.example.notes.data.local.AuthStore.getActive(appContext)?.userId ?: 0
-                val notes = withContext(Dispatchers.IO) { notesDao.getAllNotesSnapshot(backupUserId) }
-                val written = withContext(Dispatchers.IO) {
-                    BackupExporter.writeTo(appContext, notes, target)
-                }
-                lastBackupStatus =
-                    "Exported $written bytes (${notes.size} notes) to:\n$target"
-                backupSnackbar.showSnackbar(
-                    message = "Backup saved (${notes.size} notes)",
-                    withDismissAction = true
-                )
-            } catch (t: Throwable) {
-                lastBackupStatus = "Backup failed: ${t.message ?: t.javaClass.simpleName}"
-                backupSnackbar.showSnackbar(
-                    message = "Backup failed",
-                    withDismissAction = true
-                )
-            }
-        }
-    }
 
     Scaffold(
         topBar = {
@@ -177,7 +129,6 @@ fun SettingsScreen(
                 )
             )
         },
-        snackbarHost = { SnackbarHost(hostState = backupSnackbar) },
         containerColor = notesHeaderBackground()
     ) { innerPadding ->
         Column(
@@ -348,47 +299,7 @@ fun SettingsScreen(
                 }
             }
 
-            /* ---------------- Backup ---------------- */
-            SectionHeader(title = "Backup")
 
-            SettingsGroup {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { exportJsonLauncher.launch(suggestedBackupName) }
-                        .padding(horizontal = 16.dp, vertical = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    SettingsIconBadge(icon = Icons.Filled.CloudUpload)
-                    Spacer(Modifier.size(16.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Export notes to JSON",
-                            style = MaterialTheme.typography.bodyLarge,
-                            fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            text = "Save a portable backup of every note, " +
-                                "including formatting, images, and account info.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-                lastBackupStatus?.let { msg ->
-                    HorizontalDivider(
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                        color = MaterialTheme.colorScheme.outlineVariant
-                    )
-                    Text(
-                        text = msg,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
-                    )
-                }
-            }
 
             /* ---------------- About ---------------- */
             SectionHeader(title = "About")

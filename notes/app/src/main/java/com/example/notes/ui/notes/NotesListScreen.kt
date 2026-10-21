@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -55,6 +56,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.FabPosition
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -147,8 +149,7 @@ fun NotesListScreen(
     var isSelectionMode by remember { mutableStateOf(false) }
     var selectedIds by remember { mutableStateOf(setOf<Long>()) }
     var viewMode by remember { mutableStateOf(ViewMode.LINEAR) }
-    var overflowExpanded by remember { mutableStateOf(false) }
-    var sortMenuExpanded by remember { mutableStateOf(false) }
+    var showSortViewSheet by remember { mutableStateOf(false) }
     var longPressedNoteId by remember { mutableStateOf<Long?>(null) }
 
     val searchFocusRequester = remember { FocusRequester() }
@@ -269,108 +270,23 @@ fun NotesListScreen(
                     } else if (isSearchActive) {
                         // Search mode: no extra actions.
                     } else {
-                        IconButton(onClick = { isSearchActive = true }) {
-                            Icon(
-                                imageVector = Icons.Filled.Search,
-                                contentDescription = "Search"
-                            )
-                        }
                         IconButton(onClick = { viewModel.syncNow() }) {
                             Icon(
                                 imageVector = Icons.Filled.Sync,
                                 contentDescription = "Sync"
                             )
                         }
-                        Box {
-                            IconButton(onClick = { overflowExpanded = true }) {
-                                Icon(
-                                    imageVector = Icons.Filled.MoreVert,
-                                    contentDescription = "More"
-                                )
-                            }
-                            DropdownMenu(
-                                expanded = overflowExpanded,
-                                onDismissRequest = { overflowExpanded = false }
-                            ) {
-                                DropdownMenuItem(
-                                    text = { Text("Select") },
-                                    leadingIcon = { Icon(Icons.Filled.CheckBox, contentDescription = null) },
-                                    onClick = {
-                                        overflowExpanded = false
-                                        isSelectionMode = true
-                                    }
-                                )
-                                DropdownMenuItem(
-                                    text = {
-                                        Text(
-                                            if (viewMode == ViewMode.LINEAR) "Grid view"
-                                            else "List view"
-                                        )
-                                    },
-                                    leadingIcon = {
-                                        Icon(
-                                            imageVector = if (viewMode == ViewMode.LINEAR)
-                                                Icons.Filled.GridView
-                                            else Icons.Filled.ViewAgenda,
-                                            contentDescription = null
-                                        )
-                                    },
-                                    onClick = {
-                                        overflowExpanded = false
-                                        viewMode = if (viewMode == ViewMode.LINEAR)
-                                            ViewMode.GRID
-                                        else ViewMode.LINEAR
-                                    }
-                                )
-                                HorizontalDivider()
-                                DropdownMenuItem(
-                                    text = {
-                                        Text(
-                                            "Sort: ${
-                                                when (sort) {
-                                                    NotesSort.UPDATED_DESC -> "Updated (newest)"
-                                                    NotesSort.CREATED_DESC -> "Created (newest)"
-                                                    NotesSort.TITLE_ASC -> "Title (A→Z)"
-                                                }
-                                            }"
-                                        )
-                                    },
-                                    leadingIcon = {
-                                        Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = null)
-                                    },
-                                    onClick = {
-                                        overflowExpanded = false
-                                        sortMenuExpanded = true
-                                    }
-                                )
-                            }
-                            DropdownMenu(
-                                expanded = sortMenuExpanded,
-                                onDismissRequest = { sortMenuExpanded = false }
-                            ) {
-                                NotesSort.values().forEach { option ->
-                                    DropdownMenuItem(
-                                        text = {
-                                            Text(
-                                                when (option) {
-                                                    NotesSort.UPDATED_DESC -> "Updated (newest)"
-                                                    NotesSort.CREATED_DESC -> "Created (newest)"
-                                                    NotesSort.TITLE_ASC -> "Title (A→Z)"
-                                                }
-                                            )
-                                        },
-                                        leadingIcon = {
-                                            if (sort == option) {
-                                                Icon(Icons.Filled.Check, contentDescription = null)
-                                            }
-                                        },
-                                        onClick = {
-                                            viewModel.setSort(option)
-                                            sortMenuExpanded = false
-                                        }
-                                    )
-                                }
-                            }
+                        IconButton(onClick = { showSortViewSheet = true }) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.Sort,
+                                contentDescription = "Sort and view"
+                            )
+                        }
+                        IconButton(onClick = { isSearchActive = true }) {
+                            Icon(
+                                imageVector = Icons.Filled.Search,
+                                contentDescription = "Search"
+                            )
                         }
                     }
                 },
@@ -384,37 +300,105 @@ fun NotesListScreen(
         },
         floatingActionButton = {
             if (!isSelectionMode && filter != NotesFilter.TRASH) {
-                val linearCollapsed by remember {
-                    derivedStateOf {
-                        linearListState.firstVisibleItemIndex > 0 ||
-                            linearListState.firstVisibleItemScrollOffset > 240
-                    }
-                }
-                val gridCollapsed by remember {
-                    derivedStateOf {
-                        staggeredGridState.firstVisibleItemIndex > 0 ||
-                            staggeredGridState.firstVisibleItemScrollOffset > 240
-                    }
-                }
-                val fabCollapsed =
-                    if (viewMode == ViewMode.LINEAR) linearCollapsed else gridCollapsed
-
                 ExtendedFloatingActionButton(
                     onClick = onAddNote,
-                    expanded = !fabCollapsed,
-                    text = { Text("Compose") },
                     icon = {
                         Icon(
                             imageVector = Icons.Filled.Edit,
-                            contentDescription = "Compose note"
+                            contentDescription = null
                         )
                     },
+                    text = {
+                        Text(
+                            text = "Compose",
+                            fontWeight = FontWeight.Bold
+                        )
+                    },
+                    shape = RoundedCornerShape(20.dp),
                     containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.navigationBarsPadding()
                 )
             }
         },
-        floatingActionButtonPosition = androidx.compose.material3.FabPosition.Center,
+        floatingActionButtonPosition = FabPosition.End,
+        bottomBar = {
+            if (isSelectionMode) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .navigationBarsPadding(),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 24.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceAround,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(
+                            onClick = {
+                                selectedIds.forEach { id ->
+                                    val note = notes.find { it.id == id }
+                                    if (note != null) viewModel.togglePin(note)
+                                }
+                                isSelectionMode = false
+                                selectedIds = emptySet()
+                            },
+                            enabled = selectedIds.isNotEmpty()
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.PushPin,
+                                contentDescription = "Pin selected",
+                                tint = if (selectedIds.isNotEmpty()) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                            )
+                        }
+                        IconButton(
+                            onClick = {
+                                selectedIds.forEach { id ->
+                                    val note = notes.find { it.id == id }
+                                    if (note != null) viewModel.toggleFavorite(note)
+                                }
+                                isSelectionMode = false
+                                selectedIds = emptySet()
+                            },
+                            enabled = selectedIds.isNotEmpty()
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Star,
+                                contentDescription = "Favorite selected",
+                                tint = if (selectedIds.isNotEmpty()) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                            )
+                        }
+                        IconButton(
+                            onClick = {
+                                selectedIds.forEach { id ->
+                                    val note = notes.find { it.id == id }
+                                    if (note != null) {
+                                        if (filter == NotesFilter.TRASH) viewModel.deleteNote(note)
+                                        else viewModel.moveToTrash(note)
+                                    }
+                                }
+                                isSelectionMode = false
+                                selectedIds = emptySet()
+                            },
+                            enabled = selectedIds.isNotEmpty()
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Delete,
+                                contentDescription = "Delete selected",
+                                tint = if (selectedIds.isNotEmpty()) MaterialTheme.colorScheme.error
+                                else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                            )
+                        }
+                    }
+                }
+            }
+        },
         containerColor = notesHeaderBackground()
     ) { innerPadding ->
         androidx.compose.material3.pulltorefresh.PullToRefreshBox(
@@ -537,6 +521,200 @@ fun NotesListScreen(
             }
         } else {
             longPressedNoteId = null
+        }
+    }
+
+    if (showSortViewSheet) {
+        SortViewBottomSheet(
+            viewMode = viewMode,
+            onViewModeChange = { viewMode = it },
+            sort = sort,
+            onSortChange = { viewModel.setSort(it) },
+            onDismiss = { showSortViewSheet = false }
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SortViewBottomSheet(
+    viewMode: ViewMode,
+    onViewModeChange: (ViewMode) -> Unit,
+    sort: NotesSort,
+    onSortChange: (NotesSort) -> Unit,
+    onDismiss: () -> Unit
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
+        dragHandle = {
+            Box(
+                modifier = Modifier
+                    .padding(vertical = 12.dp)
+                    .size(width = 36.dp, height = 4.dp)
+                    .background(
+                        color = MaterialTheme.colorScheme.outlineVariant,
+                        shape = RoundedCornerShape(2.dp)
+                    )
+            )
+        }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp, vertical = 8.dp)
+                .padding(bottom = 32.dp)
+        ) {
+            Text(
+                text = "Sort & view",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                text = "Choose how your notes are arranged",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Spacer(Modifier.height(20.dp))
+
+            // VIEW SECTION
+            Text(
+                text = "View",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(8.dp))
+
+            SortViewOptionRow(
+                icon = Icons.Filled.ViewAgenda,
+                label = "List view",
+                subtitle = null,
+                selected = viewMode == ViewMode.LINEAR,
+                onClick = {
+                    onViewModeChange(ViewMode.LINEAR)
+                    onDismiss()
+                }
+            )
+
+            SortViewOptionRow(
+                icon = Icons.Filled.GridView,
+                label = "Grid view",
+                subtitle = null,
+                selected = viewMode == ViewMode.GRID,
+                onClick = {
+                    onViewModeChange(ViewMode.GRID)
+                    onDismiss()
+                }
+            )
+
+            Spacer(Modifier.height(16.dp))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Spacer(Modifier.height(16.dp))
+
+            // SORT BY SECTION
+            Text(
+                text = "Sort by",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(8.dp))
+
+            SortViewOptionRow(
+                icon = Icons.AutoMirrored.Filled.Sort,
+                label = "Updated",
+                subtitle = "Newest changes first",
+                selected = sort == NotesSort.UPDATED_DESC,
+                onClick = {
+                    onSortChange(NotesSort.UPDATED_DESC)
+                    onDismiss()
+                }
+            )
+
+            SortViewOptionRow(
+                icon = Icons.Filled.Edit,
+                label = "Created",
+                subtitle = "Newest notes first",
+                selected = sort == NotesSort.CREATED_DESC,
+                onClick = {
+                    onSortChange(NotesSort.CREATED_DESC)
+                    onDismiss()
+                }
+            )
+
+            SortViewOptionRow(
+                icon = Icons.AutoMirrored.Filled.Sort,
+                label = "Title",
+                subtitle = "Alphabetically A–Z",
+                selected = sort == NotesSort.TITLE_ASC,
+                onClick = {
+                    onSortChange(NotesSort.TITLE_ASC)
+                    onDismiss()
+                }
+            )
+        }
+    }
+}
+
+@Composable
+private fun SortViewOptionRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    subtitle: String?,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(12.dp),
+        color = if (selected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f) else Color.Transparent,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                modifier = Modifier.weight(1f)
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(22.dp)
+                )
+                Column {
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                        color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                    )
+                    if (subtitle != null) {
+                        Text(
+                            text = subtitle,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            androidx.compose.material3.RadioButton(
+                selected = selected,
+                onClick = onClick,
+                colors = androidx.compose.material3.RadioButtonDefaults.colors(
+                    selectedColor = MaterialTheme.colorScheme.primary
+                )
+            )
         }
     }
 }
@@ -1072,14 +1250,17 @@ private fun NoteCard(
         onClick = onClick,
         onLongClick = onLongClick
     ) { onColor, firstImageUri, plainExcerpt ->
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(modifier = Modifier.padding(14.dp)) {
             NoteCardHeader(
                 title = note.title,
                 isPinned = note.isPinned,
                 isSelectionMode = isSelectionMode,
                 isSelected = isSelected,
                 onColor = onColor,
-                titleStyle = MaterialTheme.typography.titleMedium,
+                titleStyle = MaterialTheme.typography.titleMedium.copy(
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold
+                ),
                 maxLines = 1,
                 pinIconSize = 16.dp,
                 onToggleSelected = onToggleSelected
@@ -1088,18 +1269,20 @@ private fun NoteCard(
             Spacer(Modifier.height(8.dp))
 
             if (firstImageUri != null) {
-                Row(verticalAlignment = Alignment.Top) {
+                Row(
+                    verticalAlignment = Alignment.Top,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
                     ThumbnailImage(
                         uriString = firstImageUri,
                         modifier = Modifier
-                            .size(56.dp)
-                            .padding(end = 12.dp)
+                            .size(width = 52.dp, height = 58.dp)
                     )
                     Text(
                         text = plainExcerpt.ifBlank { "No content" },
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = onColor.copy(alpha = 0.75f),
-                        maxLines = 4,
+                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp, lineHeight = 16.sp),
+                        color = onColor.copy(alpha = 0.72f),
+                        maxLines = 3,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f)
                     )
@@ -1107,9 +1290,9 @@ private fun NoteCard(
             } else {
                 Text(
                     text = plainExcerpt.ifBlank { "No content" },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = onColor.copy(alpha = 0.75f),
-                    maxLines = 6,
+                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 18.sp),
+                    color = onColor.copy(alpha = 0.72f),
+                    maxLines = 4,
                     overflow = TextOverflow.Ellipsis
                 )
             }
@@ -1143,14 +1326,17 @@ private fun NoteStaggeredCard(
         onClick = onClick,
         onLongClick = onLongClick
     ) { onColor, firstImageUri, plainExcerpt ->
-        Column(modifier = Modifier.padding(14.dp)) {
+        Column(modifier = Modifier.padding(12.dp)) {
             NoteCardHeader(
                 title = note.title,
                 isPinned = note.isPinned,
                 isSelectionMode = isSelectionMode,
                 isSelected = isSelected,
                 onColor = onColor,
-                titleStyle = MaterialTheme.typography.titleSmall,
+                titleStyle = MaterialTheme.typography.titleMedium.copy(
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold
+                ),
                 maxLines = 2,
                 pinIconSize = 14.dp,
                 onToggleSelected = onToggleSelected
@@ -1162,7 +1348,7 @@ private fun NoteStaggeredCard(
                     uriString = firstImageUri,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(96.dp)
+                        .height(104.dp)
                 )
             }
 
@@ -1170,9 +1356,9 @@ private fun NoteStaggeredCard(
 
             Text(
                 text = plainExcerpt.ifBlank { "No content" },
-                style = MaterialTheme.typography.bodySmall,
-                color = onColor.copy(alpha = 0.75f),
-                maxLines = 6,
+                style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, lineHeight = 16.sp),
+                color = onColor.copy(alpha = 0.72f),
+                maxLines = 5,
                 overflow = TextOverflow.Ellipsis
             )
 
@@ -1215,12 +1401,12 @@ private fun NoteCardContainer(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(MaterialTheme.shapes.large)
+            .clip(RoundedCornerShape(18.dp))
             .combinedClickable(
                 onClick = onClick,
                 onLongClick = onLongClick
             ),
-        shape = MaterialTheme.shapes.large,
+        shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = cardColor, contentColor = onColor),
         border = BorderStroke(
             width = if (isSelected) 2.dp else 1.dp,
@@ -1325,7 +1511,7 @@ private fun ThumbnailImage(uriString: String, modifier: Modifier = Modifier) {
     val bitmap = com.example.notes.ui.util.rememberLoadedImage(uriString)
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(10.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant),
         contentAlignment = Alignment.Center
     ) {

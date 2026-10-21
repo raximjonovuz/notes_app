@@ -43,70 +43,64 @@ private val LightOutlineLift = Color(0xFF7CA19A)
 private val DarkOutlineLift  = Color(0xFFC0D6C7)
 
 // =====================================================================
-//  Light scheme tokens (extracted from the spec table)
+//  Light scheme tokens (extracted from pen.dev V2 spec)
 // =====================================================================
-val LightBackground             = Color(0xFFF4FAF5)
-val LightOnBackground           = Forest950
-val LightSurface                = Color(0xFFF4FAF5)
-val LightOnSurface              = Forest950
+val LightBackground             = Color(0xFFF5FBF1)
+val LightOnBackground           = Color(0xFF191C18)
+val LightSurface                = Color(0xFFF5FBF1)
+val LightOnSurface              = Color(0xFF191C18)
 val LightSurfaceContainerLowest = Color(0xFFFFFFFF)
-val LightSurfaceContainerLow    = Color(0xFFEBF6ED)
-val LightSurfaceContainer       = Color(0xFFE2F3E5)
-val LightSurfaceContainerHigh   = Mist100
-val LightSurfaceContainerHighest = Color(0xFFCFE6D4)
-val LightSurfaceVariant         = Mist100
-val LightOnSurfaceVariant       = Forest700
-val LightPrimary                = Forest700
-val LightOnPrimary              = Mist100
-val LightPrimaryContainer       = Mist100
-val LightOnPrimaryContainer     = Forest900
-val LightSecondary              = Forest800
-val LightOnSecondary            = Mist100
-val LightSecondaryContainer     = Mist100
-val LightOnSecondaryContainer   = Forest800
-val LightOutline                = LightOutlineLift
-val LightOutlineVariant         = Color(0xFFC5DCCB)
+val LightSurfaceContainerLow    = Color(0xFFFFFFFF)
+val LightSurfaceContainer       = Color(0xFFFFFFFF)
+val LightSurfaceContainerHigh   = Color(0xFFE9F0E5)
+val LightSurfaceContainerHighest = Color(0xFFDCE9DF)
+val LightSurfaceVariant         = Color(0xFFE9F0E5)
+val LightOnSurfaceVariant       = Color(0xFF414940)
+val LightPrimary                = Color(0xFF2C6E3F)
+val LightOnPrimary              = Color(0xFFFFFFFF)
+val LightPrimaryContainer       = Color(0xFFB0F1B0)
+val LightOnPrimaryContainer     = Color(0xFF00210B)
+val LightSecondary              = Color(0xFF526350)
+val LightOnSecondary            = Color(0xFFFFFFFF)
+val LightSecondaryContainer     = Color(0xFFD5E8D0)
+val LightOnSecondaryContainer   = Color(0xFF101F11)
+val LightOutline                = Color(0xFFD6E2D2)
+val LightOutlineVariant         = Color(0xFFD6E2D2)
 
-// M3 defaults kept for `error` so destructive actions stay red-orange and
-// distinct from the forest palette (the brief said "M3 defaults,
-// slightly desaturated"; we read that as: stay near the M3 baseline so
-// iconography conventions don't shift).
-val LightError              = Color(0xFFB3261E)
+val LightError              = Color(0xFFBA1A1A)
 val LightOnError            = Color(0xFFFFFFFF)
-val LightErrorContainer     = Color(0xFFF9DEDC)
-val LightOnErrorContainer   = Color(0xFF410E0B)
+val LightErrorContainer     = Color(0xFFFFDAD6)
+val LightOnErrorContainer   = Color(0xFF410002)
 
 // =====================================================================
-//  Dark scheme tokens (extracted from the spec table)
+//  Dark scheme tokens (extracted from pen.dev V2 spec)
 // =====================================================================
-val DarkBackground             = Forest950
-val DarkOnBackground           = Mist100
-val DarkSurface                = Forest950
-val DarkOnSurface              = Mist100
-val DarkSurfaceContainerLowest = Forest950
-val DarkSurfaceContainerLow    = Forest900
-val DarkSurfaceContainer       = Forest900
-val DarkSurfaceContainerHigh   = Forest800
-val DarkSurfaceContainerHighest = Forest700
-val DarkSurfaceVariant         = Forest800
-val DarkOnSurfaceVariant       = Sage400
-val DarkPrimary                = Sage400
-val DarkOnPrimary              = Forest950
-val DarkPrimaryContainer       = Forest700
-val DarkOnPrimaryContainer     = Mist100
-val DarkSecondary              = Sage400
-val DarkOnSecondary            = Forest950
-val DarkSecondaryContainer     = Forest800
-val DarkOnSecondaryContainer   = Mist100
-val DarkOutline                = DarkOutlineLift
-val DarkOutlineVariant         = Forest700
+val DarkBackground             = Color(0xFF101510)
+val DarkOnBackground           = Color(0xFFE1E4DE)
+val DarkSurface                = Color(0xFF101510)
+val DarkOnSurface              = Color(0xFFE1E4DE)
+val DarkSurfaceContainerLowest = Color(0xFF0B0F0B)
+val DarkSurfaceContainerLow    = Color(0xFF161C16)
+val DarkSurfaceContainer       = Color(0xFF1A211A)
+val DarkSurfaceContainerHigh   = Color(0xFF242C24)
+val DarkSurfaceContainerHighest = Color(0xFF2F372F)
+val DarkSurfaceVariant         = Color(0xFF1A211A)
+val DarkOnSurfaceVariant       = Color(0xFFBCC5B9)
+val DarkPrimary                = Color(0xFFA8D5AB)
+val DarkOnPrimary              = Color(0xFF12381F)
+val DarkPrimaryContainer       = Color(0xFF1F5130)
+val DarkOnPrimaryContainer     = Color(0xFFC4F2C5)
+val DarkSecondary              = Color(0xFFB9CCB5)
+val DarkOnSecondary            = Color(0xFF243424)
+val DarkSecondaryContainer     = Color(0xFF3B4B3A)
+val DarkOnSecondaryContainer   = Color(0xFFD5E8D0)
+val DarkOutline                = Color(0xFF333B33)
+val DarkOutlineVariant         = Color(0xFF333B33)
 
-// Same convention — keep M3 error hues so destructive CTAs stay readable
-// at a glance in dark mode.
-val DarkError              = Color(0xFFF2B8B5)
-val DarkOnError            = Color(0xFF601410)
-val DarkErrorContainer     = Color(0xFF8C1D18)
-val DarkOnErrorContainer   = Color(0xFFF9DEDC)
+val DarkError              = Color(0xFFFFB4AB)
+val DarkOnError            = Color(0xFF690005)
+val DarkErrorContainer     = Color(0xFF93000A)
+val DarkOnErrorContainer   = Color(0xFFFFDAD6)
 
 /* =====================================================================
  * Note card backgrounds (8 swatches).
