@@ -16,6 +16,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.NoteAlt
 import androidx.compose.material.icons.filled.Settings
@@ -29,6 +30,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationDrawerItem
+import androidx.compose.material3.NavigationDrawerItemDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDrawerState
@@ -40,6 +42,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
@@ -154,6 +157,10 @@ private fun AppScreen(repository: NoteRepository, application: NotesApplication)
     // The scrim region provided by ModalNavigationDrawer already calls
     // drawerState.close() when tapped (this is its built-in behavior).
     // Additionally, every item's onClick explicitly closes the drawer.
+    val allNotesCount by repository.noteCount.collectAsStateWithLifecycle(initialValue = 0)
+    val favoriteCount by repository.favoriteCount.collectAsStateWithLifecycle(initialValue = 0)
+    val trashedCount by repository.trashedCount.collectAsStateWithLifecycle(initialValue = 0)
+
     if (showNavigationDrawer) {
         ModalNavigationDrawer(
             drawerState = drawerState,
@@ -183,7 +190,7 @@ private fun AppScreen(repository: NoteRepository, application: NotesApplication)
                     // Account Card per V2-10
                     Surface(
                         shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
                         modifier = Modifier
                             .padding(horizontal = 16.dp)
                             .padding(bottom = 16.dp)
@@ -231,10 +238,21 @@ private fun AppScreen(repository: NoteRepository, application: NotesApplication)
                         }
                     }
 
+                    val navItemColors = NavigationDrawerItemDefaults.colors(
+                        selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                        selectedTextColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                        selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+
                     NavigationDrawerItem(
                         icon = { Icon(Icons.Filled.NoteAlt, contentDescription = null) },
-                        label = { Text("All Notes", style = MaterialTheme.typography.bodyMedium) },
+                        label = { Text("All Notes", style = MaterialTheme.typography.bodyMedium, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium) },
+                        badge = {
+                            DrawerBadge(count = allNotesCount, isSelected = currentRoute == Routes.NOTES_LIST)
+                        },
                         selected = currentRoute == Routes.NOTES_LIST,
+                        shape = RoundedCornerShape(24.dp),
+                        colors = navItemColors,
                         onClick = {
                             scope.launch { drawerState.close() }
                             if (currentRoute != Routes.NOTES_LIST) {
@@ -243,33 +261,47 @@ private fun AppScreen(repository: NoteRepository, application: NotesApplication)
                                 }
                             }
                         },
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
                     )
 
                     NavigationDrawerItem(
                         icon = { Icon(Icons.Filled.Star, contentDescription = null) },
-                        label = { Text("Favorites", style = MaterialTheme.typography.bodyMedium) },
+                        label = { Text("Favorites", style = MaterialTheme.typography.bodyMedium, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium) },
+                        badge = {
+                            if (favoriteCount > 0) {
+                                DrawerBadge(count = favoriteCount, isSelected = currentRoute == Routes.FAVORITES)
+                            }
+                        },
                         selected = currentRoute == Routes.FAVORITES,
+                        shape = RoundedCornerShape(24.dp),
+                        colors = navItemColors,
                         onClick = {
                             scope.launch { drawerState.close() }
                             if (currentRoute != Routes.FAVORITES) {
                                 navController.navigate(Routes.FAVORITES)
                             }
                         },
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
                     )
 
                     NavigationDrawerItem(
                         icon = { Icon(Icons.Outlined.Delete, contentDescription = null) },
-                        label = { Text("Trash", style = MaterialTheme.typography.bodyMedium) },
+                        label = { Text("Trash", style = MaterialTheme.typography.bodyMedium, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium) },
+                        badge = {
+                            if (trashedCount > 0) {
+                                DrawerBadge(count = trashedCount, isSelected = currentRoute == Routes.TRASH)
+                            }
+                        },
                         selected = currentRoute == Routes.TRASH,
+                        shape = RoundedCornerShape(24.dp),
+                        colors = navItemColors,
                         onClick = {
                             scope.launch { drawerState.close() }
                             if (currentRoute != Routes.TRASH) {
                                 navController.navigate(Routes.TRASH)
                             }
                         },
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
                     )
 
                     Spacer(modifier = Modifier.weight(1f))
@@ -281,15 +313,29 @@ private fun AppScreen(repository: NoteRepository, application: NotesApplication)
 
                     NavigationDrawerItem(
                         icon = { Icon(Icons.Filled.Settings, contentDescription = null) },
-                        label = { Text("Settings", style = MaterialTheme.typography.bodyMedium) },
+                        label = { Text("Settings", style = MaterialTheme.typography.bodyMedium, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium) },
                         selected = currentRoute == Routes.SETTINGS,
+                        shape = RoundedCornerShape(24.dp),
+                        colors = navItemColors,
                         onClick = {
                             scope.launch { drawerState.close() }
                             if (currentRoute != Routes.SETTINGS) {
                                 navController.navigate(Routes.SETTINGS)
                             }
                         },
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
+                    )
+
+                    NavigationDrawerItem(
+                        icon = { Icon(Icons.AutoMirrored.Filled.HelpOutline, contentDescription = null) },
+                        label = { Text("Help & feedback", style = MaterialTheme.typography.bodyMedium, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium) },
+                        selected = false,
+                        shape = RoundedCornerShape(24.dp),
+                        colors = navItemColors,
+                        onClick = {
+                            scope.launch { drawerState.close() }
+                        },
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
                     )
                 }
             }
@@ -478,5 +524,27 @@ private fun AppNavHost(
                 }
             )
         }
+    }
+}
+
+@Composable
+private fun DrawerBadge(count: Int, isSelected: Boolean) {
+    androidx.compose.foundation.layout.Box(
+        modifier = Modifier
+            .size(24.dp)
+            .clip(CircleShape)
+            .background(
+                if (isSelected) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.surfaceVariant
+            ),
+        contentAlignment = androidx.compose.ui.Alignment.Center
+    ) {
+        Text(
+            text = count.toString(),
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+            color = if (isSelected) MaterialTheme.colorScheme.onPrimary
+            else MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }

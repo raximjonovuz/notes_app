@@ -1,11 +1,17 @@
 package com.example.notes.ui.notes
 
+import android.content.Context
+import androidx.compose.material.icons.outlined.History
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,6 +24,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -30,7 +37,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.DriveFileMove
 import androidx.compose.material.icons.automirrored.filled.Sort
+import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckBox
 import androidx.compose.material.icons.filled.Close
@@ -38,11 +47,15 @@ import androidx.compose.material.icons.filled.CloudOff
 
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Restore
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PushPin
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
@@ -109,6 +122,48 @@ import java.util.Locale
 
 enum class ViewMode { LINEAR, GRID }
 
+enum class SearchTimeFilter(val label: String) {
+    ALL("All"),
+    TODAY("Today"),
+    THIS_WEEK("This week"),
+    HAS_IMAGE("Has image")
+}
+
+object SearchHistoryManager {
+    private const val PREFS_NAME = "notes_search_history"
+    private const val KEY_HISTORY = "recent_queries"
+    private const val MAX_HISTORY = 10
+
+    fun getHistory(context: Context): List<String> {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val raw = prefs.getString(KEY_HISTORY, null) ?: return emptyList()
+        return raw.split("|||").filter { it.isNotBlank() }
+    }
+
+    fun addQuery(context: Context, query: String) {
+        val trimmed = query.trim()
+        if (trimmed.isEmpty()) return
+        val current = getHistory(context).toMutableList()
+        current.remove(trimmed)
+        current.add(0, trimmed)
+        val trimmedList = current.take(MAX_HISTORY)
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putString(KEY_HISTORY, trimmedList.joinToString("|||")).apply()
+    }
+
+    fun removeQuery(context: Context, query: String) {
+        val current = getHistory(context).toMutableList()
+        current.remove(query.trim())
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putString(KEY_HISTORY, current.joinToString("|||")).apply()
+    }
+
+    fun clearAll(context: Context) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().remove(KEY_HISTORY).apply()
+    }
+}
+
 /* =====================================================================
  *  Screen
  * ===================================================================== */
@@ -151,6 +206,16 @@ fun NotesListScreen(
     var viewMode by remember { mutableStateOf(ViewMode.LINEAR) }
     var showSortViewSheet by remember { mutableStateOf(false) }
     var longPressedNoteId by remember { mutableStateOf<Long?>(null) }
+    var searchTimeFilter by remember { mutableStateOf(SearchTimeFilter.ALL) }
+    var searchHistory by remember { mutableStateOf(SearchHistoryManager.getHistory(context)) }
+
+    fun onPerformSearch(q: String) {
+        viewModel.onSearchQueryChange(q)
+        if (q.isNotBlank()) {
+            SearchHistoryManager.addQuery(context, q)
+            searchHistory = SearchHistoryManager.getHistory(context)
+        }
+    }
 
     val searchFocusRequester = remember { FocusRequester() }
     val linearListState = rememberLazyListState()
@@ -177,14 +242,21 @@ fun NotesListScreen(
             TopAppBar(
                 title = {
                     when {
-                        isSelectionMode -> Text(
-                            text = "${selectedIds.size} selected",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.SemiBold
-                        )
+                        isSelectionMode -> Column {
+                            Text(
+                                text = "${selectedIds.size} selected",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "of ${notes.size} notes",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                         isSearchActive -> SearchPillField(
                             query = searchQuery,
-                            onQueryChange = viewModel::onSearchQueryChange,
+                            onQueryChange = { onPerformSearch(it) },
                             focusRequester = searchFocusRequester,
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -194,14 +266,16 @@ fun NotesListScreen(
                             Text(
                                 text = titleText,
                                 style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.SemiBold
+                                fontWeight = FontWeight.Bold
                             )
                             Text(
                                 text = "$noteCount notes",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                            SyncStatusText(status = syncStatus)
+                            if (filter != NotesFilter.TRASH) {
+                                SyncStatusText(status = syncStatus)
+                            }
                         }
                     }
                 },
@@ -212,7 +286,7 @@ fun NotesListScreen(
                             selectedIds = emptySet()
                         }) {
                             Icon(
-                                Icons.AutoMirrored.Filled.ArrowBack,
+                                Icons.Filled.Close,
                                 contentDescription = "Exit selection"
                             )
                         }
@@ -240,32 +314,22 @@ fun NotesListScreen(
                             }) {
                                 Text(
                                     text = if (allSelected) "Deselect all" else "Select all",
-                                    color = MaterialTheme.colorScheme.primary
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.SemiBold
                                 )
                             }
                         }
-                        IconButton(
-                            onClick = {
-                                selectedIds.forEach { id ->
-                                    val note = notes.find { it.id == id }
-                                    if (note != null) {
-                                        if (filter == NotesFilter.TRASH)
-                                            viewModel.deleteNote(note)
-                                        else viewModel.moveToTrash(note)
-                                    }
-                                }
-                                isSelectionMode = false
-                                selectedIds = emptySet()
-                            },
-                            enabled = selectedIds.isNotEmpty()
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.Delete,
-                                contentDescription = "Delete selected",
-                                tint = if (selectedIds.isNotEmpty())
-                                    MaterialTheme.colorScheme.error
-                                else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                    } else if (filter == NotesFilter.TRASH) {
+                        if (notes.isNotEmpty()) {
+                            TextButton(onClick = {
+                                notes.forEach { viewModel.deleteNote(it) }
+                            }) {
+                                Text(
+                                    text = "Empty trash",
+                                    color = MaterialTheme.colorScheme.error,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
                         }
                     } else if (isSearchActive) {
                         // Search mode: no extra actions.
@@ -319,9 +383,31 @@ fun NotesListScreen(
                     contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
                     modifier = Modifier.navigationBarsPadding()
                 )
+            } else if (!isSelectionMode && filter == NotesFilter.TRASH && notes.isNotEmpty()) {
+                ExtendedFloatingActionButton(
+                    onClick = {
+                        notes.forEach { viewModel.restoreFromTrash(it) }
+                    },
+                    icon = {
+                        Icon(
+                            imageVector = Icons.Filled.Restore,
+                            contentDescription = null
+                        )
+                    },
+                    text = {
+                        Text(
+                            text = "Restore all",
+                            fontWeight = FontWeight.Bold
+                        )
+                    },
+                    shape = RoundedCornerShape(20.dp),
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.navigationBarsPadding()
+                )
             }
         },
-        floatingActionButtonPosition = FabPosition.End,
+        floatingActionButtonPosition = if (filter == NotesFilter.TRASH) FabPosition.Center else FabPosition.End,
         bottomBar = {
             if (isSelectionMode) {
                 Surface(
@@ -334,11 +420,14 @@ fun NotesListScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 24.dp, vertical = 12.dp),
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
                         horizontalArrangement = Arrangement.SpaceAround,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        IconButton(
+                        SelectionActionButton(
+                            icon = Icons.AutoMirrored.Filled.DriveFileMove,
+                            label = "Move",
+                            enabled = selectedIds.isNotEmpty(),
                             onClick = {
                                 selectedIds.forEach { id ->
                                     val note = notes.find { it.id == id }
@@ -346,17 +435,12 @@ fun NotesListScreen(
                                 }
                                 isSelectionMode = false
                                 selectedIds = emptySet()
-                            },
-                            enabled = selectedIds.isNotEmpty()
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.PushPin,
-                                contentDescription = "Pin selected",
-                                tint = if (selectedIds.isNotEmpty()) MaterialTheme.colorScheme.primary
-                                else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
-                            )
-                        }
-                        IconButton(
+                            }
+                        )
+                        SelectionActionButton(
+                            icon = Icons.Filled.Star,
+                            label = "Favorite",
+                            enabled = selectedIds.isNotEmpty(),
                             onClick = {
                                 selectedIds.forEach { id ->
                                     val note = notes.find { it.id == id }
@@ -364,17 +448,13 @@ fun NotesListScreen(
                                 }
                                 isSelectionMode = false
                                 selectedIds = emptySet()
-                            },
-                            enabled = selectedIds.isNotEmpty()
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.Star,
-                                contentDescription = "Favorite selected",
-                                tint = if (selectedIds.isNotEmpty()) MaterialTheme.colorScheme.primary
-                                else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
-                            )
-                        }
-                        IconButton(
+                            }
+                        )
+                        SelectionActionButton(
+                            icon = Icons.Filled.Delete,
+                            label = "Delete",
+                            tint = MaterialTheme.colorScheme.error,
+                            enabled = selectedIds.isNotEmpty(),
                             onClick = {
                                 selectedIds.forEach { id ->
                                     val note = notes.find { it.id == id }
@@ -385,102 +465,231 @@ fun NotesListScreen(
                                 }
                                 isSelectionMode = false
                                 selectedIds = emptySet()
-                            },
-                            enabled = selectedIds.isNotEmpty()
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.Delete,
-                                contentDescription = "Delete selected",
-                                tint = if (selectedIds.isNotEmpty()) MaterialTheme.colorScheme.error
-                                else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
-                            )
-                        }
+                            }
+                        )
+                        SelectionActionButton(
+                            icon = Icons.Filled.Share,
+                            label = "Share",
+                            enabled = selectedIds.isNotEmpty(),
+                            onClick = {
+                                val selectedNotes = notes.filter { selectedIds.contains(it.id) }
+                                val shareText = selectedNotes.joinToString("\n\n---\n\n") { n ->
+                                    val plain = blocksToPlainText(parseBlocksFromContent(n.content))
+                                    "${n.title}\n$plain"
+                                }
+                                val sendIntent = android.content.Intent().apply {
+                                    action = android.content.Intent.ACTION_SEND
+                                    putExtra(android.content.Intent.EXTRA_TEXT, shareText)
+                                    type = "text/plain"
+                                }
+                                context.startActivity(android.content.Intent.createChooser(sendIntent, "Share notes"))
+                                isSelectionMode = false
+                                selectedIds = emptySet()
+                            }
+                        )
                     }
                 }
             }
         },
         containerColor = notesHeaderBackground()
     ) { innerPadding ->
-        androidx.compose.material3.pulltorefresh.PullToRefreshBox(
-            isRefreshing = syncStatus.syncing,
-            onRefresh = { viewModel.syncNow() },
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-        ) {
-            Box(modifier = Modifier.fillMaxSize()) {
-                if (notes.isEmpty()) {
+        val now = remember { System.currentTimeMillis() }
+        val todayMidnight = remember(now) {
+            val cal = java.util.Calendar.getInstance().apply {
+                set(java.util.Calendar.HOUR_OF_DAY, 0)
+                set(java.util.Calendar.MINUTE, 0)
+                set(java.util.Calendar.SECOND, 0)
+                set(java.util.Calendar.MILLISECOND, 0)
+            }
+            cal.timeInMillis
+        }
+        val weekStart = remember(todayMidnight) { todayMidnight - 7L * 24 * 3600 * 1000 }
+
+        val filteredNotes: List<NoteEntity> = remember(notes, isSearchActive, searchTimeFilter) {
+            if (!isSearchActive) notes
+            else {
+                when (searchTimeFilter) {
+                    SearchTimeFilter.ALL -> notes
+                    SearchTimeFilter.TODAY -> notes.filter { it.updatedAt >= todayMidnight }
+                    SearchTimeFilter.THIS_WEEK -> notes.filter { it.updatedAt >= weekStart }
+                    SearchTimeFilter.HAS_IMAGE -> notes.filter { it.imageUris.isNotBlank() }
+                }
+            }
+        }
+
+        if (isSearchActive) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+            ) {
+                SearchChipsBar(
+                    selectedFilter = searchTimeFilter,
+                    onSelectFilter = { searchTimeFilter = it }
+                )
+
+                if (searchQuery.isBlank()) {
+                    SearchRecentView(
+                        history = searchHistory,
+                        onSelectQuery = { q -> onPerformSearch(q) },
+                        onRemoveQuery = { q ->
+                            SearchHistoryManager.removeQuery(context, q)
+                            searchHistory = SearchHistoryManager.getHistory(context)
+                        },
+                        onClearAll = {
+                            SearchHistoryManager.clearAll(context)
+                            searchHistory = emptyList()
+                        }
+                    )
+                } else if (filteredNotes.isEmpty()) {
                     EmptyStateFor(
                         filter = filter,
                         searchQuery = searchQuery,
-                        isTrash = filter == NotesFilter.TRASH,
+                        isTrash = false,
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(32.dp)
                     )
                 } else {
-                    val (pinned, others) = remember(notes) { notes.partition { it.isPinned } }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "${filteredNotes.size} results for \"$searchQuery\"",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    val (pinned, others) = remember(filteredNotes) { filteredNotes.partition { it.isPinned } }
                     if (viewMode == ViewMode.LINEAR) {
                         LinearNoteList(
                             pinned = pinned,
                             others = others,
+                            filter = filter,
                             linearListState = linearListState,
                             isSelectionMode = isSelectionMode,
                             isSelected = { selectedIds.contains(it) },
                             onClickNote = { id ->
                                 if (isSelectionMode) toggleSelection(id)
-                                else if (filter != NotesFilter.TRASH) onNoteClick(id)
+                                else onNoteClick(id)
                             },
                             onLongPress = { id -> if (!isSelectionMode) longPressedNoteId = id },
-                            onToggleSelected = { id -> toggleSelection(id) }
+                            onToggleSelected = { id -> toggleSelection(id) },
+                            onRestoreNote = { viewModel.restoreFromTrash(it) },
+                            onPermanentDeleteNote = { viewModel.deleteNote(it) }
                         )
                     } else {
                         StaggeredNotesGrid(
                             pinned = pinned,
                             others = others,
+                            filter = filter,
                             staggeredGridState = staggeredGridState,
                             isSelectionMode = isSelectionMode,
                             isSelected = { selectedIds.contains(it) },
                             onClickNote = { id ->
                                 if (isSelectionMode) toggleSelection(id)
-                                else if (filter != NotesFilter.TRASH) onNoteClick(id)
+                                else onNoteClick(id)
                             },
                             onLongPress = { id -> if (!isSelectionMode) longPressedNoteId = id },
-                            onToggleSelected = { id -> toggleSelection(id) }
+                            onToggleSelected = { id -> toggleSelection(id) },
+                            onRestoreNote = { viewModel.restoreFromTrash(it) },
+                            onPermanentDeleteNote = { viewModel.deleteNote(it) }
                         )
                     }
                 }
+            }
+        } else {
+            androidx.compose.material3.pulltorefresh.PullToRefreshBox(
+                isRefreshing = syncStatus.syncing,
+                onRefresh = { viewModel.syncNow() },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+            ) {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    if (notes.isEmpty()) {
+                        EmptyStateFor(
+                            filter = filter,
+                            searchQuery = searchQuery,
+                            isTrash = filter == NotesFilter.TRASH,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(32.dp)
+                        )
+                    } else {
+                        val (pinned, others) = remember(notes) { notes.partition { it.isPinned } }
+                        if (viewMode == ViewMode.LINEAR) {
+                            LinearNoteList(
+                                pinned = pinned,
+                                others = others,
+                                filter = filter,
+                                linearListState = linearListState,
+                                isSelectionMode = isSelectionMode,
+                                isSelected = { selectedIds.contains(it) },
+                                onClickNote = { id ->
+                                    if (isSelectionMode) toggleSelection(id)
+                                    else if (filter != NotesFilter.TRASH) onNoteClick(id)
+                                },
+                                onLongPress = { id -> if (!isSelectionMode) longPressedNoteId = id },
+                                onToggleSelected = { id -> toggleSelection(id) },
+                                onRestoreNote = { viewModel.restoreFromTrash(it) },
+                                onPermanentDeleteNote = { viewModel.deleteNote(it) }
+                            )
+                        } else {
+                            StaggeredNotesGrid(
+                                pinned = pinned,
+                                others = others,
+                                filter = filter,
+                                staggeredGridState = staggeredGridState,
+                                isSelectionMode = isSelectionMode,
+                                isSelected = { selectedIds.contains(it) },
+                                onClickNote = { id ->
+                                    if (isSelectionMode) toggleSelection(id)
+                                    else if (filter != NotesFilter.TRASH) onNoteClick(id)
+                                },
+                                onLongPress = { id -> if (!isSelectionMode) longPressedNoteId = id },
+                                onToggleSelected = { id -> toggleSelection(id) },
+                                onRestoreNote = { viewModel.restoreFromTrash(it) },
+                                onPermanentDeleteNote = { viewModel.deleteNote(it) }
+                            )
+                        }
+                    }
 
-                androidx.compose.animation.AnimatedVisibility(
-                    visible = showOfflineBanner,
-                    enter = androidx.compose.animation.slideInVertically(initialOffsetY = { it }) + androidx.compose.animation.fadeIn(),
-                    exit = androidx.compose.animation.slideOutVertically(targetOffsetY = { it }) + androidx.compose.animation.fadeOut(),
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(bottom = 24.dp)
-                ) {
-                    androidx.compose.material3.Surface(
-                        shape = RoundedCornerShape(24.dp),
-                        color = MaterialTheme.colorScheme.inverseSurface.copy(alpha = 0.92f),
-                        contentColor = MaterialTheme.colorScheme.inverseOnSurface,
-                        tonalElevation = 6.dp,
-                        shadowElevation = 8.dp
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = showOfflineBanner,
+                        enter = androidx.compose.animation.slideInVertically(initialOffsetY = { it }) + androidx.compose.animation.fadeIn(),
+                        exit = androidx.compose.animation.slideOutVertically(targetOffsetY = { it }) + androidx.compose.animation.fadeOut(),
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = 24.dp)
                     ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        androidx.compose.material3.Surface(
+                            shape = RoundedCornerShape(24.dp),
+                            color = MaterialTheme.colorScheme.inverseSurface.copy(alpha = 0.92f),
+                            contentColor = MaterialTheme.colorScheme.inverseOnSurface,
+                            tonalElevation = 6.dp,
+                            shadowElevation = 8.dp
                         ) {
-                            Icon(
-                                imageVector = Icons.Filled.CloudOff,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp),
-                                tint = MaterialTheme.colorScheme.inverseOnSurface
-                            )
-                            Text(
-                                text = "Offline",
-                                style = MaterialTheme.typography.labelLarge
-                            )
+                            Row(
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.CloudOff,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp),
+                                    tint = MaterialTheme.colorScheme.inverseOnSurface
+                                )
+                                Text(
+                                    text = "Offline",
+                                    style = MaterialTheme.typography.labelLarge
+                                )
+                            }
                         }
                     }
                 }
@@ -728,13 +937,17 @@ private fun SortViewOptionRow(
 private fun LinearNoteList(
     pinned: List<NoteEntity>,
     others: List<NoteEntity>,
+    filter: NotesFilter,
     linearListState: androidx.compose.foundation.lazy.LazyListState,
     isSelectionMode: Boolean,
     isSelected: (Long) -> Boolean,
     onClickNote: (Long) -> Unit,
     onLongPress: (Long) -> Unit,
-    onToggleSelected: (Long) -> Unit
+    onToggleSelected: (Long) -> Unit,
+    onRestoreNote: (NoteEntity) -> Unit,
+    onPermanentDeleteNote: (NoteEntity) -> Unit
 ) {
+    val isTrash = filter == NotesFilter.TRASH
     LazyColumn(
         state = linearListState,
         modifier = Modifier.fillMaxSize(),
@@ -743,6 +956,11 @@ private fun LinearNoteList(
         ),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
+        if (isTrash) {
+            item(key = "trash_banner") {
+                TrashInfoBanner()
+            }
+        }
         if (pinned.isNotEmpty()) {
             item(key = "section:pinned") {
                 SectionHeader("Pinned", pinned.size)
@@ -752,9 +970,12 @@ private fun LinearNoteList(
                     note = note,
                     isSelectionMode = isSelectionMode,
                     isSelected = isSelected(note.id),
+                    isTrash = isTrash,
                     onClick = { onClickNote(note.id) },
                     onLongClick = { onLongPress(note.id) },
-                    onToggleSelected = { onToggleSelected(note.id) }
+                    onToggleSelected = { onToggleSelected(note.id) },
+                    onRestore = { onRestoreNote(note) },
+                    onPermanentDelete = { onPermanentDeleteNote(note) }
                 )
             }
         }
@@ -769,9 +990,12 @@ private fun LinearNoteList(
                     note = note,
                     isSelectionMode = isSelectionMode,
                     isSelected = isSelected(note.id),
+                    isTrash = isTrash,
                     onClick = { onClickNote(note.id) },
                     onLongClick = { onLongPress(note.id) },
-                    onToggleSelected = { onToggleSelected(note.id) }
+                    onToggleSelected = { onToggleSelected(note.id) },
+                    onRestore = { onRestoreNote(note) },
+                    onPermanentDelete = { onPermanentDeleteNote(note) }
                 )
             }
         }
@@ -783,13 +1007,17 @@ private fun LinearNoteList(
 private fun StaggeredNotesGrid(
     pinned: List<NoteEntity>,
     others: List<NoteEntity>,
+    filter: NotesFilter,
     staggeredGridState: androidx.compose.foundation.lazy.staggeredgrid.LazyStaggeredGridState,
     isSelectionMode: Boolean,
     isSelected: (Long) -> Boolean,
     onClickNote: (Long) -> Unit,
     onLongPress: (Long) -> Unit,
-    onToggleSelected: (Long) -> Unit
+    onToggleSelected: (Long) -> Unit,
+    onRestoreNote: (NoteEntity) -> Unit,
+    onPermanentDeleteNote: (NoteEntity) -> Unit
 ) {
+    val isTrash = filter == NotesFilter.TRASH
     LazyVerticalStaggeredGrid(
         state = staggeredGridState,
         columns = StaggeredGridCells.Fixed(2),
@@ -800,6 +1028,11 @@ private fun StaggeredNotesGrid(
         verticalItemSpacing = 8.dp,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
+        if (isTrash) {
+            item(key = "trash_banner", span = StaggeredGridItemSpan.FullLine) {
+                TrashInfoBanner()
+            }
+        }
         if (pinned.isNotEmpty()) {
             item(key = "section:pinned", span = StaggeredGridItemSpan.FullLine) {
                 SectionHeader("Pinned", pinned.size)
@@ -809,9 +1042,12 @@ private fun StaggeredNotesGrid(
                     note = note,
                     isSelectionMode = isSelectionMode,
                     isSelected = isSelected(note.id),
+                    isTrash = isTrash,
                     onClick = { onClickNote(note.id) },
                     onLongClick = { onLongPress(note.id) },
-                    onToggleSelected = { onToggleSelected(note.id) }
+                    onToggleSelected = { onToggleSelected(note.id) },
+                    onRestore = { onRestoreNote(note) },
+                    onPermanentDelete = { onPermanentDeleteNote(note) }
                 )
             }
         }
@@ -826,9 +1062,12 @@ private fun StaggeredNotesGrid(
                     note = note,
                     isSelectionMode = isSelectionMode,
                     isSelected = isSelected(note.id),
+                    isTrash = isTrash,
                     onClick = { onClickNote(note.id) },
                     onLongClick = { onLongPress(note.id) },
-                    onToggleSelected = { onToggleSelected(note.id) }
+                    onToggleSelected = { onToggleSelected(note.id) },
+                    onRestore = { onRestoreNote(note) },
+                    onPermanentDelete = { onPermanentDeleteNote(note) }
                 )
             }
         }
@@ -1230,6 +1469,142 @@ private fun SearchPillField(
     }
 }
 
+@Composable
+private fun SearchChipsBar(
+    selectedFilter: SearchTimeFilter,
+    onSelectFilter: (SearchTimeFilter) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        SearchTimeFilter.values().forEach { filter ->
+            val isSelected = filter == selectedFilter
+            Surface(
+                onClick = { onSelectFilter(filter) },
+                shape = CircleShape,
+                color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+                border = if (!isSelected) BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant) else null
+            ) {
+                Text(
+                    text = filter.label,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 7.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SearchRecentView(
+    history: List<String>,
+    onSelectQuery: (String) -> Unit,
+    onRemoveQuery: (String) -> Unit,
+    onClearAll: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp)
+    ) {
+        if (history.isNotEmpty()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Recent searches",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                TextButton(onClick = onClearAll) {
+                    Text(
+                        text = "Clear all",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+
+            history.forEach { query ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onSelectQuery(query) }
+                        .padding(vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.History,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(Modifier.width(16.dp))
+                    Text(
+                        text = query,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(
+                        onClick = { onRemoveQuery(query) },
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Close,
+                            contentDescription = "Remove search",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(24.dp))
+        }
+
+        Text(
+            text = "Search tips",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(
+                    text = "Find anything, fast",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "Search looks inside note titles, text, checklists and tags. Use \"tag:work\" or \"is:pinned\" to narrow results.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
 /* =====================================================================
  *  Note cards — list & staggered grid
  * ===================================================================== */
@@ -1239,9 +1614,12 @@ private fun NoteCard(
     note: NoteEntity,
     isSelectionMode: Boolean,
     isSelected: Boolean,
+    isTrash: Boolean = false,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
-    onToggleSelected: () -> Unit
+    onToggleSelected: () -> Unit,
+    onRestore: () -> Unit = {},
+    onPermanentDelete: () -> Unit = {}
 ) {
     NoteCardContainer(
         note = note,
@@ -1303,6 +1681,9 @@ private fun NoteCard(
                 updatedAt = note.updatedAt,
                 isFavorite = note.isFavorite,
                 isSelectionMode = isSelectionMode,
+                isTrash = isTrash,
+                onRestore = onRestore,
+                onPermanentDelete = onPermanentDelete,
                 onColor = onColor,
                 starSize = 14.dp
             )
@@ -1315,9 +1696,12 @@ private fun NoteStaggeredCard(
     note: NoteEntity,
     isSelectionMode: Boolean,
     isSelected: Boolean,
+    isTrash: Boolean = false,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
-    onToggleSelected: () -> Unit
+    onToggleSelected: () -> Unit,
+    onRestore: () -> Unit = {},
+    onPermanentDelete: () -> Unit = {}
 ) {
     NoteCardContainer(
         note = note,
@@ -1368,6 +1752,9 @@ private fun NoteStaggeredCard(
                 updatedAt = note.updatedAt,
                 isFavorite = note.isFavorite,
                 isSelectionMode = isSelectionMode,
+                isTrash = isTrash,
+                onRestore = onRestore,
+                onPermanentDelete = onPermanentDelete,
                 onColor = onColor,
                 starSize = 13.dp
             )
@@ -1447,10 +1834,30 @@ private fun NoteCardHeader(
             modifier = Modifier.weight(1f)
         )
         if (isSelectionMode) {
-            Checkbox(
-                checked = isSelected,
-                onCheckedChange = { onToggleSelected() }
-            )
+            Box(
+                modifier = Modifier
+                    .size(24.dp)
+                    .clip(CircleShape)
+                    .background(
+                        if (isSelected) MaterialTheme.colorScheme.primary
+                        else Color.Transparent
+                    )
+                    .then(
+                        if (!isSelected) Modifier.border(2.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
+                        else Modifier
+                    )
+                    .clickable { onToggleSelected() },
+                contentAlignment = Alignment.Center
+            ) {
+                if (isSelected) {
+                    Icon(
+                        imageVector = Icons.Filled.Check,
+                        contentDescription = "Selected",
+                        tint = MaterialTheme.colorScheme.onPrimary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
         } else if (isPinned) {
             Icon(
                 imageVector = Icons.Filled.PushPin,
@@ -1467,6 +1874,9 @@ private fun NoteCardFooter(
     updatedAt: Long,
     isFavorite: Boolean,
     isSelectionMode: Boolean,
+    isTrash: Boolean = false,
+    onRestore: () -> Unit = {},
+    onPermanentDelete: () -> Unit = {},
     onColor: Color,
     starSize: androidx.compose.ui.unit.Dp
 ) {
@@ -1475,17 +1885,115 @@ private fun NoteCardFooter(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(
-            text = formatDateShort(updatedAt),
-            style = MaterialTheme.typography.labelSmall,
-            color = onColor.copy(alpha = 0.65f)
-        )
-        if (isFavorite && !isSelectionMode) {
+        if (isTrash) {
+            Text(
+                text = "Deleted · 30 days left",
+                style = MaterialTheme.typography.labelSmall,
+                color = onColor.copy(alpha = 0.65f)
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                IconButton(
+                    onClick = onRestore,
+                    modifier = Modifier.size(28.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Restore,
+                        contentDescription = "Restore",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+                IconButton(
+                    onClick = onPermanentDelete,
+                    modifier = Modifier.size(28.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Delete,
+                        contentDescription = "Delete permanently",
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+        } else {
+            Text(
+                text = formatDateShort(updatedAt),
+                style = MaterialTheme.typography.labelSmall,
+                color = onColor.copy(alpha = 0.65f)
+            )
+            if (isFavorite && !isSelectionMode) {
+                Icon(
+                    imageVector = Icons.Filled.Star,
+                    contentDescription = "Favorite",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(starSize)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TrashInfoBanner() {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.2f))
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
             Icon(
-                imageVector = Icons.Filled.Star,
-                contentDescription = "Favorite",
+                imageVector = Icons.Filled.Info,
+                contentDescription = null,
                 tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(starSize)
+                modifier = Modifier.size(20.dp)
+            )
+            Text(
+                text = "Notes in Trash are deleted automatically after 30 days",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+        }
+    }
+}
+
+@Composable
+private fun SelectionActionButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    enabled: Boolean,
+    tint: Color = MaterialTheme.colorScheme.onSurface,
+    onClick: () -> Unit
+) {
+    val alpha = if (enabled) 1f else 0.38f
+    Surface(
+        onClick = onClick,
+        enabled = enabled,
+        color = Color.Transparent,
+        shape = RoundedCornerShape(8.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = label,
+                tint = tint.copy(alpha = alpha),
+                modifier = Modifier.size(22.dp)
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                color = tint.copy(alpha = alpha)
             )
         }
     }

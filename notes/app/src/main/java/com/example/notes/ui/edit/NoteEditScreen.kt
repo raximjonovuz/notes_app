@@ -57,6 +57,21 @@ import androidx.compose.material.icons.filled.FormatListNumbered
 import androidx.compose.material.icons.filled.FormatStrikethrough
 import androidx.compose.material.icons.filled.FormatUnderlined
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.AddCircleOutline
+import androidx.compose.material.icons.filled.CalendarToday
+import androidx.compose.material.icons.filled.FormatQuote
+import androidx.compose.material.icons.filled.FormatSize
+import androidx.compose.material.icons.filled.HorizontalRule
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Label
+import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.PushPin
+import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.TextFields
+import androidx.compose.material.icons.filled.Title
+import androidx.compose.material3.Switch
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.TextDecrease
@@ -201,6 +216,8 @@ fun NoteEditScreen(
     var textColorPickerVisible by remember { mutableStateOf(false) }
     var fullScreenImageUri by remember { mutableStateOf<String?>(null) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
+    var noteDetailsVisible by remember { mutableStateOf(false) }
+    var insertFormatVisible by remember { mutableStateOf(false) }
 
     // For a brand new note, seed an empty TextBlock so the content editor
     // has a target for the user to type into. Auto-focus the first block.
@@ -439,39 +456,56 @@ fun NoteEditScreen(
                     // half-formed predictive-text state. Material3 TextField
                     // doesn't expose the underlying TextFieldValue / composition
                     // to the call site.
-                    BasicTextField(
-                        value = TextFieldValue(
-                            text = state.title,
-                            selection = TextRange(state.title.length)
-                        ),
-                        onValueChange = viewModel::onTitleChange,
-                        singleLine = true,
-                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                        textStyle = MaterialTheme.typography.headlineMedium.copy(
-                            color = MaterialTheme.colorScheme.onBackground
-                        ),
-                        // Disable autocomplete so the IME never injects
-                        // suggestions like "<1000S>" into the title field.
-                        keyboardOptions = KeyboardOptions(
-                            autoCorrectEnabled = false,
-                            capitalization = androidx.compose.ui.text.input.KeyboardCapitalization.Sentences
-                        ),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(headerBg),
-                        decorationBox = { inner ->
-                            Box(modifier = Modifier.fillMaxWidth()) {
-                                if (state.title.isEmpty()) {
-                                    Text(
-                                        text = "Untitled",
-                                        style = MaterialTheme.typography.headlineMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
+                    Column {
+                        BasicTextField(
+                            value = TextFieldValue(
+                                text = state.title,
+                                selection = TextRange(state.title.length)
+                            ),
+                            onValueChange = viewModel::onTitleChange,
+                            singleLine = true,
+                            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                            textStyle = MaterialTheme.typography.titleMedium.copy(
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onBackground
+                            ),
+                            keyboardOptions = KeyboardOptions(
+                                autoCorrectEnabled = false,
+                                capitalization = androidx.compose.ui.text.input.KeyboardCapitalization.Sentences
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(headerBg),
+                            decorationBox = { inner ->
+                                Box(modifier = Modifier.fillMaxWidth()) {
+                                    if (state.title.isEmpty()) {
+                                        Text(
+                                            text = "Untitled",
+                                            style = MaterialTheme.typography.titleMedium.copy(
+                                                fontWeight = FontWeight.Bold
+                                            ),
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    inner()
                                 }
-                                inner()
                             }
+                        )
+                        val wordCount = remember(state.content) {
+                            state.content.split(Regex("\\s+")).count { it.isNotBlank() }
                         }
-                    )
+                        val dateFormatted = remember(state.updatedAt) {
+                            val fmt = java.text.SimpleDateFormat("MMM d, yyyy · HH:mm", java.util.Locale.getDefault())
+                            fmt.format(java.util.Date(state.updatedAt))
+                        }
+                        Text(
+                            text = "$dateFormatted · $wordCount words",
+                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 },
 navigationIcon = {
                     IconButton(onClick = {
@@ -535,17 +569,15 @@ actions = {
                             expanded = menuExpanded,
                             onDismissRequest = { menuExpanded = false }
                         ) {
-                            // V4.4: word/character count is now computed from
-                            // the live editor state so the numbers are
-                            // always up to date.
-                            val words = state.content
-                                .split(Regex("\\s+"))
-                                .count { it.isNotBlank() }
-                            val chars = state.content.length
                             DropdownMenuItem(
-                                text = { Text("Stats: $words words · $chars chars") },
-                                onClick = { menuExpanded = false },
-                                enabled = false
+                                text = { Text("Note details") },
+                                leadingIcon = {
+                                    Icon(Icons.Filled.Info, contentDescription = null)
+                                },
+                                onClick = {
+                                    menuExpanded = false
+                                    noteDetailsVisible = true
+                                }
                             )
                             HorizontalDivider()
                             DropdownMenuItem(
@@ -670,9 +702,41 @@ onClick = {
                 onAlignRightClick = { viewModel.setTextAlign(2) },
                 onDecreaseSizeClick = viewModel::decreaseTextSize,
                 onIncreaseSizeClick = viewModel::increaseTextSize,
-                onShowTextColorPicker = { textColorPickerVisible = true }
+                onShowTextColorPicker = { textColorPickerVisible = true },
+                onOpenInsertFormat = { insertFormatVisible = true }
             )
         }
+    }
+
+    if (noteDetailsVisible) {
+        NoteDetailsBottomSheet(
+            state = state,
+            onTogglePin = { viewModel.togglePinned() },
+            onToggleFavorite = { viewModel.toggleFavorite() },
+            onMoveToTrash = {
+                noteDetailsVisible = false
+                viewModel.moveToTrash()
+                onBack()
+            },
+            onDismiss = { noteDetailsVisible = false }
+        )
+    }
+
+    if (insertFormatVisible) {
+        InsertFormatBottomSheet(
+            onHeading = { viewModel.insertHeading(1) },
+            onTitle = { viewModel.insertHeading(2) },
+            onSubtitle = { viewModel.insertHeading(3) },
+            onChecklist = { viewModel.toggleChecklist() },
+            onBulletList = { viewModel.setListType(1) },
+            onNumberedList = { viewModel.setListType(2) },
+            onCodeBlock = { viewModel.insertCodeBlock() },
+            onQuote = { viewModel.insertQuote() },
+            onDivider = { viewModel.insertDivider() },
+            onImage = { imagePickerLauncher.launch("image/*") },
+            onLink = { viewModel.insertLink("link", "https://") },
+            onDismiss = { insertFormatVisible = false }
+        )
     }
 
     // ----- V6: color pickers live in bottom sheets, not dropdowns -----
@@ -817,7 +881,8 @@ private fun EditorToolbar(
     onAlignRightClick: () -> Unit,
     onDecreaseSizeClick: () -> Unit,
     onIncreaseSizeClick: () -> Unit,
-    onShowTextColorPicker: () -> Unit
+    onShowTextColorPicker: () -> Unit,
+    onOpenInsertFormat: () -> Unit
 ) {
     // V5.0.1 — single horizontal row, scrollable, vertically compact.
     // The previous two-row variant wasted ~56dp of vertical space and
@@ -988,6 +1053,14 @@ private fun EditorToolbar(
             onClick = onAlignRightClick,
             active = textAlignIndex == 2,
             enabled = !hideListControls
+        )
+
+        ToolbarDivider()
+
+        ToolbarIconButton(
+            imageVector = Icons.Filled.AddCircleOutline,
+            contentDescription = "Insert format",
+            onClick = onOpenInsertFormat
         )
     }
 }
@@ -1874,5 +1947,483 @@ private fun isLight(c: Color): Boolean {
     // perceptual luminance
     val lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
     return lum > 0.55f
+}
+
+/* =====================================================================
+ *  Note Details bottom sheet (Screen 13)
+ * ===================================================================== */
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun NoteDetailsBottomSheet(
+    state: NoteEditState,
+    onTogglePin: () -> Unit,
+    onToggleFavorite: () -> Unit,
+    onMoveToTrash: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val words = remember(state.content) {
+        state.content.split(Regex("\\s+")).count { it.isNotBlank() }
+    }
+    val readTime = maxOf(1, (words + 199) / 200)
+    val imageCount = remember(state.blocks) {
+        state.blocks.count { it is ContentBlock.ImageBlock }
+    }
+    val checklistCount = remember(state.blocks) {
+        state.blocks.sumOf { block ->
+            if (block is ContentBlock.TextBlock && block.isChecklist) {
+                block.text.lines().count { it.isNotBlank() }
+            } else 0
+        }
+    }
+    val dateTimeFmt = remember { java.text.SimpleDateFormat("MMM d, yyyy · HH:mm", java.util.Locale.getDefault()) }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+                .padding(bottom = 32.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Note details",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.Filled.Close, contentDescription = "Close")
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            // 2x2 stats grid
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                StatCard(
+                    value = "$words",
+                    label = "Words",
+                    modifier = Modifier.weight(1f)
+                )
+                StatCard(
+                    value = "$readTime min",
+                    label = "Read time",
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            Spacer(Modifier.height(10.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                StatCard(
+                    value = "$imageCount",
+                    label = if (imageCount == 1) "Image" else "Images",
+                    modifier = Modifier.weight(1f)
+                )
+                StatCard(
+                    value = "$checklistCount",
+                    label = "Checklists",
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
+            Spacer(Modifier.height(20.dp))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Spacer(Modifier.height(8.dp))
+
+            // Metadata rows
+            DetailInfoRow(
+                icon = Icons.Filled.CalendarToday,
+                label = "Created",
+                value = dateTimeFmt.format(java.util.Date(state.createdAt))
+            )
+            DetailInfoRow(
+                icon = Icons.Filled.Schedule,
+                label = "Modified",
+                value = dateTimeFmt.format(java.util.Date(state.updatedAt))
+            )
+            DetailInfoRow(
+                icon = Icons.Filled.LocationOn,
+                label = "Location",
+                value = "Not set"
+            )
+            DetailInfoRow(
+                icon = Icons.Filled.Label,
+                label = "Tags",
+                value = "None"
+            )
+
+            Spacer(Modifier.height(8.dp))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Spacer(Modifier.height(8.dp))
+
+            // Switches
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.PushPin,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Text(
+                        text = "Pin to top",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+                Switch(
+                    checked = state.isPinned,
+                    onCheckedChange = { onTogglePin() }
+                )
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Star,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Text(
+                        text = "Add to favorites",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+                Switch(
+                    checked = state.isFavorite,
+                    onCheckedChange = { onToggleFavorite() }
+                )
+            }
+
+            Spacer(Modifier.height(8.dp))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Spacer(Modifier.height(8.dp))
+
+            // Actions
+            Surface(
+                onClick = onMoveToTrash,
+                modifier = Modifier.fillMaxWidth(),
+                color = Color.Transparent
+            ) {
+                Row(
+                    modifier = Modifier.padding(vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Delete,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Text(
+                        text = "Move to trash",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.error,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StatCard(
+    value: String,
+    label: String,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
+        ) {
+            Text(
+                text = value,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun DetailInfoRow(
+    icon: ImageVector,
+    label: String,
+    value: String
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp)
+            )
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+    }
+}
+
+/* =====================================================================
+ *  Insert & Format bottom sheet (Screen 16)
+ * ===================================================================== */
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun InsertFormatBottomSheet(
+    onHeading: () -> Unit,
+    onTitle: () -> Unit,
+    onSubtitle: () -> Unit,
+    onChecklist: () -> Unit,
+    onBulletList: () -> Unit,
+    onNumberedList: () -> Unit,
+    onCodeBlock: () -> Unit,
+    onQuote: () -> Unit,
+    onDivider: () -> Unit,
+    onImage: () -> Unit,
+    onLink: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+                .padding(bottom = 32.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = "Insert",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = "Choose what to add to your note",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.Filled.Close, contentDescription = "Close")
+                }
+            }
+
+            Spacer(Modifier.height(20.dp))
+
+            // Row 1: Heading, Title, Subtitle
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                InsertTile(
+                    icon = Icons.Filled.Title,
+                    label = "Heading",
+                    modifier = Modifier.weight(1f),
+                    onClick = { onHeading(); onDismiss() }
+                )
+                InsertTile(
+                    icon = Icons.Filled.FormatSize,
+                    label = "Title",
+                    modifier = Modifier.weight(1f),
+                    onClick = { onTitle(); onDismiss() }
+                )
+                InsertTile(
+                    icon = Icons.Filled.TextFields,
+                    label = "Subtitle",
+                    modifier = Modifier.weight(1f),
+                    onClick = { onSubtitle(); onDismiss() }
+                )
+            }
+
+            Spacer(Modifier.height(10.dp))
+
+            // Row 2: Checklist, Bullet list, Numbered list
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                InsertTile(
+                    icon = Icons.Filled.Checklist,
+                    label = "Checklist",
+                    modifier = Modifier.weight(1f),
+                    onClick = { onChecklist(); onDismiss() }
+                )
+                InsertTile(
+                    icon = Icons.AutoMirrored.Filled.FormatListBulleted,
+                    label = "Bullet list",
+                    modifier = Modifier.weight(1f),
+                    onClick = { onBulletList(); onDismiss() }
+                )
+                InsertTile(
+                    icon = Icons.Filled.FormatListNumbered,
+                    label = "Numbered list",
+                    modifier = Modifier.weight(1f),
+                    onClick = { onNumberedList(); onDismiss() }
+                )
+            }
+
+            Spacer(Modifier.height(10.dp))
+
+            // Row 3: Code block, Quote, Divider
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                InsertTile(
+                    icon = Icons.Filled.Code,
+                    label = "Code block",
+                    modifier = Modifier.weight(1f),
+                    onClick = { onCodeBlock(); onDismiss() }
+                )
+                InsertTile(
+                    icon = Icons.Filled.FormatQuote,
+                    label = "Quote",
+                    modifier = Modifier.weight(1f),
+                    onClick = { onQuote(); onDismiss() }
+                )
+                InsertTile(
+                    icon = Icons.Filled.HorizontalRule,
+                    label = "Divider",
+                    modifier = Modifier.weight(1f),
+                    onClick = { onDivider(); onDismiss() }
+                )
+            }
+
+            Spacer(Modifier.height(10.dp))
+
+            // Row 4: Image, Link
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                InsertTile(
+                    icon = Icons.Filled.Image,
+                    label = "Image",
+                    modifier = Modifier.weight(1f),
+                    onClick = { onImage(); onDismiss() }
+                )
+                InsertTile(
+                    icon = Icons.Filled.Link,
+                    label = "Link",
+                    modifier = Modifier.weight(1f),
+                    onClick = { onLink(); onDismiss() }
+                )
+                Spacer(modifier = Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+@Composable
+private fun InsertTile(
+    icon: ImageVector,
+    label: String,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        modifier = modifier,
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+    ) {
+        Column(
+            modifier = Modifier.padding(vertical = 14.dp, horizontal = 6.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = label,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(24.dp)
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
 }
 

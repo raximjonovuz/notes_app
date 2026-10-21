@@ -82,7 +82,11 @@ data class NoteEditState(
     val isSaved: Boolean = false,
     val isNew: Boolean = true,
     val isDirty: Boolean = false,
-    val backgroundColor: Int = 0
+    val backgroundColor: Int = 0,
+    val isPinned: Boolean = false,
+    val isFavorite: Boolean = false,
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis()
 ) {
     val content: String
         get() = blocksToPlainText(blocks)
@@ -288,7 +292,11 @@ class NoteEditViewModel(
                     isSaved = true,
                     isNew = false,
                     backgroundColor = note.backgroundColor,
-                    activeBlockId = firstTextId
+                    activeBlockId = firstTextId,
+                    isPinned = note.isPinned,
+                    isFavorite = note.isFavorite,
+                    createdAt = note.createdAt,
+                    updatedAt = note.updatedAt
                 )
                 originalTitle = note.title
                 originalContent = serializeBlocksToContent(blocks)
@@ -1166,7 +1174,7 @@ class NoteEditViewModel(
                         content = serializedContent,
                         createdAt = now,
                         updatedAt = now,
-                        isFavorite = false,
+                        isFavorite = current.isFavorite,
                         isTrashed = false,
                         backgroundColor = current.backgroundColor,
                         fontWeight = if (lastTextBlock?.styleRanges?.any { it.bold } == true) 1 else 0,
@@ -1174,7 +1182,7 @@ class NoteEditViewModel(
                         imageUris = joinImageUris(uris),
                         serverId = null,
                         userId = 0,
-                        isPinned = false
+                        isPinned = current.isPinned
                     )
                     val id = repository.insertNote(toInsert)
                     Logger.d(
@@ -1184,11 +1192,7 @@ class NoteEditViewModel(
                     id
                 } else {
                     // UPDATE — load the previous row so we preserve
-                    // serverId, userId, isFavorite, isPinned, createdAt.
-                    // Re-creating NoteEntity with just the editor fields
-                    // would reset every one of those to its default,
-                    // dropping the user from their account and losing the
-                    // synced-serverId.
+                    // serverId, userId, createdAt.
                     val existing = repository.getNoteById(current.id)
                     val merged = (existing
                         ?: NoteEntity(
@@ -1205,7 +1209,9 @@ class NoteEditViewModel(
                         backgroundColor = current.backgroundColor,
                         fontWeight = if (lastTextBlock?.styleRanges?.any { it.bold } == true) 1 else 0,
                         textSize = lastTextBlock?.fontSize ?: 1,
-                        imageUris = joinImageUris(uris)
+                        imageUris = joinImageUris(uris),
+                        isPinned = current.isPinned,
+                        isFavorite = current.isFavorite
                     )
                     repository.updateNote(merged)
                     Logger.d(
@@ -1319,6 +1325,97 @@ class NoteEditViewModel(
                 _saveStatus.value = SaveStatus.Failed(t.message ?: "Delete failed")
             }
         }
+    }
+
+    fun togglePinned() {
+        val next = !_state.value.isPinned
+        _state.value = _state.value.copy(isPinned = next)
+        saveNow()
+    }
+
+    fun toggleFavorite() {
+        val next = !_state.value.isFavorite
+        _state.value = _state.value.copy(isFavorite = next)
+        saveNow()
+    }
+
+    fun insertHeading(level: Int) {
+        val sizeIndex = when (level) {
+            1 -> 2 // Heading (large)
+            2 -> 1 // Title (medium)
+            else -> 0 // Subtitle (small)
+        }
+        val current = _state.value
+        val (activeId, _) = resolveTargetBlock(current, snackOnFallback = false) ?: return
+        val newBlocks = current.blocks.map { block ->
+            if (block is ContentBlock.TextBlock && block.id == activeId) {
+                block.copy(fontSize = sizeIndex)
+            } else block
+        }
+        _state.value = current.copy(blocks = newBlocks)
+        saveNow()
+    }
+
+    fun insertCodeBlock() {
+        val current = _state.value
+        val activeId = resolveTargetBlock(current, snackOnFallback = false)?.first
+        val list = current.blocks.toMutableList()
+        val index = if (activeId != null) list.indexOfFirst { it.id == activeId } else -1
+        val codeBlock = ContentBlock.TextBlock(
+            text = "```\n// Code here\n```"
+        )
+        if (index >= 0) {
+            list.add(index + 1, codeBlock)
+        } else {
+            list.add(codeBlock)
+        }
+        _state.value = current.copy(blocks = list, activeBlockId = codeBlock.id)
+        saveNow()
+    }
+
+    fun insertQuote() {
+        val current = _state.value
+        val (activeId, _) = resolveTargetBlock(current, snackOnFallback = false) ?: return
+        val newBlocks = current.blocks.map { block ->
+            if (block is ContentBlock.TextBlock && block.id == activeId) {
+                val newText = if (block.text.startsWith("> ")) block.text else "> ${block.text}"
+                block.copy(text = newText)
+            } else block
+        }
+        _state.value = current.copy(blocks = newBlocks)
+        saveNow()
+    }
+
+    fun insertDivider() {
+        val current = _state.value
+        val activeId = resolveTargetBlock(current, snackOnFallback = false)?.first
+        val list = current.blocks.toMutableList()
+        val index = if (activeId != null) list.indexOfFirst { it.id == activeId } else -1
+        val dividerBlock = ContentBlock.TextBlock(text = "———")
+        val nextTextBlock = ContentBlock.TextBlock()
+        if (index >= 0) {
+            list.add(index + 1, dividerBlock)
+            list.add(index + 2, nextTextBlock)
+        } else {
+            list.add(dividerBlock)
+            list.add(nextTextBlock)
+        }
+        _state.value = current.copy(blocks = list, activeBlockId = nextTextBlock.id)
+        saveNow()
+    }
+
+    fun insertLink(label: String, url: String) {
+        val linkMarkdown = "[$label]($url)"
+        val current = _state.value
+        val (activeId, _) = resolveTargetBlock(current, snackOnFallback = false) ?: return
+        val newBlocks = current.blocks.map { block ->
+            if (block is ContentBlock.TextBlock && block.id == activeId) {
+                val newText = if (block.text.isEmpty()) linkMarkdown else "${block.text} $linkMarkdown"
+                block.copy(text = newText)
+            } else block
+        }
+        _state.value = current.copy(blocks = newBlocks)
+        saveNow()
     }
 
     class Factory(
