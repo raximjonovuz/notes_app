@@ -601,49 +601,48 @@ fun NoteEditScreen(
                 .padding(horizontal = 18.dp, vertical = 8.dp)
                 .imePadding()
         ) {
-            Column(
+            BasicTextField(
+                value = TextFieldValue(
+                    text = state.title,
+                    selection = TextRange(state.title.length)
+                ),
+                onValueChange = viewModel::onTitleChange,
+                singleLine = false,
+                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                textStyle = MaterialTheme.typography.headlineSmall.copy(
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = onColor
+                ),
+                keyboardOptions = KeyboardOptions(
+                    autoCorrectEnabled = false,
+                    capitalization = androidx.compose.ui.text.input.KeyboardCapitalization.Sentences
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp, bottom = 12.dp),
+                decorationBox = { inner ->
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        if (state.title.isEmpty()) {
+                            Text(
+                                text = "Title",
+                                style = MaterialTheme.typography.headlineSmall.copy(
+                                    fontSize = 22.sp,
+                                    fontWeight = FontWeight.Bold
+                                ),
+                                color = onColor.copy(alpha = 0.45f)
+                            )
+                        }
+                        inner()
+                    }
+                }
+            )
+
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .verticalScroll(rememberScrollState())
             ) {
-                BasicTextField(
-                    value = TextFieldValue(
-                        text = state.title,
-                        selection = TextRange(state.title.length)
-                    ),
-                    onValueChange = viewModel::onTitleChange,
-                    singleLine = false,
-                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                    textStyle = MaterialTheme.typography.headlineSmall.copy(
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = onColor
-                    ),
-                    keyboardOptions = KeyboardOptions(
-                        autoCorrectEnabled = false,
-                        capitalization = androidx.compose.ui.text.input.KeyboardCapitalization.Sentences
-                    ),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 4.dp, bottom = 12.dp),
-                    decorationBox = { inner ->
-                        Box(modifier = Modifier.fillMaxWidth()) {
-                            if (state.title.isEmpty()) {
-                                Text(
-                                    text = "Title",
-                                    style = MaterialTheme.typography.headlineSmall.copy(
-                                        fontSize = 22.sp,
-                                        fontWeight = FontWeight.Bold
-                                    ),
-                                    color = onColor.copy(alpha = 0.45f)
-                                )
-                            }
-                            inner()
-                        }
-                    }
-                )
-
                 BlocksEditor(
                     blocks = state.blocks,
                     activeBlockId = state.activeBlockId,

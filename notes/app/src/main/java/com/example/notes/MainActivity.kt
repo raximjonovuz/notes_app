@@ -17,11 +17,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.HelpOutline
+import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.NoteAlt
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DrawerState
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -33,12 +35,15 @@ import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.NavigationDrawerItemDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
@@ -160,6 +165,7 @@ private fun AppScreen(repository: NoteRepository, application: NotesApplication)
     val allNotesCount by repository.noteCount.collectAsStateWithLifecycle(initialValue = 0)
     val favoriteCount by repository.favoriteCount.collectAsStateWithLifecycle(initialValue = 0)
     val trashedCount by repository.trashedCount.collectAsStateWithLifecycle(initialValue = 0)
+    var showLogoutConfirmDialog by remember { mutableStateOf(false) }
 
     if (showNavigationDrawer) {
         ModalNavigationDrawer(
@@ -337,6 +343,19 @@ private fun AppScreen(repository: NoteRepository, application: NotesApplication)
                         },
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
                     )
+
+                    NavigationDrawerItem(
+                        icon = { Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+                        label = { Text("Log out", style = MaterialTheme.typography.bodyMedium, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium, color = MaterialTheme.colorScheme.error) },
+                        selected = false,
+                        shape = RoundedCornerShape(24.dp),
+                        colors = navItemColors,
+                        onClick = {
+                            scope.launch { drawerState.close() }
+                            showLogoutConfirmDialog = true
+                        },
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
+                    )
                 }
             }
         ) {
@@ -347,6 +366,37 @@ private fun AppScreen(repository: NoteRepository, application: NotesApplication)
                 notesListViewModel = notesListViewModel,
                 drawerState = drawerState,
                 scope = scope
+            )
+        }
+
+        if (showLogoutConfirmDialog) {
+            val context = androidx.compose.ui.platform.LocalContext.current
+            val activeEmail = com.example.notes.data.local.AuthStore.getActive(context)?.email ?: ""
+            AlertDialog(
+                onDismissRequest = { showLogoutConfirmDialog = false },
+                title = { Text("Log out?") },
+                text = { Text(if (activeEmail.isNotBlank()) "You will be signed out of $activeEmail." else "Are you sure you want to log out?") },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            showLogoutConfirmDialog = false
+                            scope.launch {
+                                drawerState.close()
+                                com.example.notes.data.remote.AuthRepository(context).clearAll()
+                                navController.navigate(Routes.LOGIN) {
+                                    popUpTo(navController.graph.id) { inclusive = true }
+                                }
+                            }
+                        }
+                    ) {
+                        Text("Log out", color = MaterialTheme.colorScheme.error)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showLogoutConfirmDialog = false }) {
+                        Text("Cancel")
+                    }
+                }
             )
         }
     } else {
@@ -489,10 +539,9 @@ private fun AppNavHost(
                     navController.navigate(Routes.LOGIN)
                 },
                 onRequireLogin = {
-                    // All accounts gone → pop back stack to the login entry.
-                    navController.popBackStack(Routes.NOTES_LIST, inclusive = true)
+                    // All accounts gone → pop back stack and navigate to login.
                     navController.navigate(Routes.LOGIN) {
-                        popUpTo(0) { inclusive = true }
+                        popUpTo(navController.graph.id) { inclusive = true }
                     }
                 }
             )

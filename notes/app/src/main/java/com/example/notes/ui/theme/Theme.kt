@@ -137,8 +137,8 @@ object ThemeManager {
     private const val KEY_DARK_MODE = "dark_mode"
     private const val KEY_DYNAMIC_COLOR_OLD = "use_dynamic_color"
 
-    /** Active mode. SYSTEM follows the OS, others force light/dark. */
-    var themeMode by mutableStateOf(ThemeMode.SYSTEM)
+    /** Active mode. Defaults to LIGHT for clean white background. */
+    var themeMode by mutableStateOf(ThemeMode.LIGHT)
         private set
 
     /** Dynamic color on/off — Android 12+. */
@@ -197,15 +197,21 @@ object ThemeManager {
     fun loadPersisted(context: Context): ThemeMode {
         val prefs = context.applicationContext
             .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val mode = when (prefs.getString(KEY_THEME_MODE, null)) {
-            ThemeMode.SYSTEM.name -> ThemeMode.SYSTEM
-            ThemeMode.LIGHT.name -> ThemeMode.LIGHT
-            ThemeMode.DARK.name  -> ThemeMode.DARK
-            else -> {
-                if (prefs.contains(KEY_DARK_MODE)) {
-                    if (prefs.getBoolean(KEY_DARK_MODE, false)) ThemeMode.DARK
-                    else ThemeMode.LIGHT
-                } else ThemeMode.SYSTEM
+        val v6Migrated = prefs.getBoolean("v6_white_default_applied", false)
+        val mode = if (!v6Migrated) {
+            prefs.edit {
+                putString(KEY_THEME_MODE, ThemeMode.LIGHT.name)
+                putBoolean(KEY_DARK_MODE, false)
+                putBoolean(KEY_DYNAMIC_COLOR, false)
+                putBoolean("v6_white_default_applied", true)
+            }
+            ThemeMode.LIGHT
+        } else {
+            when (prefs.getString(KEY_THEME_MODE, null)) {
+                ThemeMode.SYSTEM.name -> ThemeMode.SYSTEM
+                ThemeMode.LIGHT.name -> ThemeMode.LIGHT
+                ThemeMode.DARK.name  -> ThemeMode.DARK
+                else -> ThemeMode.LIGHT
             }
         }
         themeMode = mode
@@ -215,8 +221,7 @@ object ThemeManager {
             ThemeMode.DARK  -> true
             ThemeMode.SYSTEM -> false
         }
-        dynamicColorEnabled = prefs.getBoolean(KEY_DYNAMIC_COLOR,
-            prefs.getBoolean(KEY_DYNAMIC_COLOR_OLD, false))
+        dynamicColorEnabled = prefs.getBoolean(KEY_DYNAMIC_COLOR, false)
         return mode
     }
 }
