@@ -67,8 +67,13 @@ import androidx.compose.material.icons.filled.Label
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.PushPin
+import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.StarBorder
+import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Title
 import androidx.compose.material3.Switch
@@ -134,6 +139,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.notes.ui.theme.noteCardColor
+import com.example.notes.ui.theme.noteCardOnColor
 import com.example.notes.ui.theme.notesHeaderBackground
 import com.example.notes.ui.theme.notesPageBackground
 import kotlinx.coroutines.delay
@@ -446,101 +452,66 @@ fun NoteEditScreen(
         )
     }
 
+    val onColor = noteCardOnColor(state.backgroundColor)
+
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
+        containerColor = cardBg,
         topBar = {
             TopAppBar(
                 title = {
-                    // V5.0.2 — BasicTextField (not Material3 TextField) so
-                    // we can capture IME composition and avoid saving the
-                    // half-formed predictive-text state. Material3 TextField
-                    // doesn't expose the underlying TextFieldValue / composition
-                    // to the call site.
-                    Column {
-                        BasicTextField(
-                            value = TextFieldValue(
-                                text = state.title,
-                                selection = TextRange(state.title.length)
-                            ),
-                            onValueChange = viewModel::onTitleChange,
-                            singleLine = true,
-                            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                            textStyle = MaterialTheme.typography.titleMedium.copy(
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onBackground
-                            ),
-                            keyboardOptions = KeyboardOptions(
-                                autoCorrectEnabled = false,
-                                capitalization = androidx.compose.ui.text.input.KeyboardCapitalization.Sentences
-                            ),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(headerBg),
-                            decorationBox = { inner ->
-                                Box(modifier = Modifier.fillMaxWidth()) {
-                                    if (state.title.isEmpty()) {
-                                        Text(
-                                            text = "Untitled",
-                                            style = MaterialTheme.typography.titleMedium.copy(
-                                                fontWeight = FontWeight.Bold
-                                            ),
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                    inner()
-                                }
-                            }
-                        )
-                        val wordCount = remember(state.content) {
-                            state.content.split(Regex("\\s+")).count { it.isNotBlank() }
-                        }
-                        val dateFormatted = remember(state.updatedAt) {
-                            val fmt = java.text.SimpleDateFormat("MMM d, yyyy · HH:mm", java.util.Locale.getDefault())
-                            fmt.format(java.util.Date(state.updatedAt))
-                        }
-                        Text(
-                            text = "$dateFormatted · $wordCount words",
-                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
+                    SaveStatusIndicator(saveStatus = saveStatus)
                 },
-navigationIcon = {
+                navigationIcon = {
                     IconButton(onClick = {
-                        // V4.3: always persist before leaving so we don't
-                        // drop the user's last edits on a fast back press.
                         viewModel.saveNow()
-                        // V5.0.2: also flush the debounced push so the
-                        // server gets the final state without waiting 5s.
                         viewModel.flushPendingPush()
                         onBack()
                     }) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
+                            contentDescription = "Back",
+                            tint = onColor
                         )
                     }
                 },
-actions = {
-                    // V5.1.5 — small saving-status indicator BEFORE the
-                    // toolbar buttons so the user always knows whether
-                    // their edits have been persisted. Idle = invisible,
-                    // Saving = spinner, Saved = checkmark (auto-fades),
-                    // Failed = warning icon.
-                    SaveStatusIndicator(saveStatus = saveStatus)
-                    // V4.5 — undo / redo live in the top app bar so the user
-                    // can roll back the last edit without leaving the editor.
-                    // Both buttons are visually disabled when their stack
-                    // is empty (Material colour scheme respects ContentAlpha).
+                actions = {
+                    IconButton(onClick = { viewModel.togglePinned() }) {
+                        Icon(
+                            imageVector = if (state.isPinned) Icons.Filled.PushPin else Icons.Outlined.PushPin,
+                            contentDescription = if (state.isPinned) "Unpin" else "Pin",
+                            tint = if (state.isPinned) MaterialTheme.colorScheme.primary else onColor
+                        )
+                    }
+                    IconButton(onClick = {
+                        scope.launch {
+                            snackbarHostState.showSnackbar(
+                                message = "Reminder feature coming soon",
+                                duration = androidx.compose.material3.SnackbarDuration.Short
+                            )
+                        }
+                    }) {
+                        Icon(
+                            imageVector = Icons.Filled.Notifications,
+                            contentDescription = "Reminder",
+                            tint = onColor
+                        )
+                    }
+                    IconButton(onClick = { viewModel.toggleFavorite() }) {
+                        Icon(
+                            imageVector = if (state.isFavorite) Icons.Filled.Star else Icons.Filled.StarBorder,
+                            contentDescription = "Favorite",
+                            tint = if (state.isFavorite) Color(0xFFF4B400) else onColor
+                        )
+                    }
                     IconButton(
                         onClick = { viewModel.undo() },
                         enabled = canUndo
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.Undo,
-                            contentDescription = "Undo"
+                            contentDescription = "Undo",
+                            tint = if (canUndo) onColor else onColor.copy(alpha = 0.38f)
                         )
                     }
                     IconButton(
@@ -549,20 +520,16 @@ actions = {
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.Redo,
-                            contentDescription = "Redo"
+                            contentDescription = "Redo",
+                            tint = if (canRedo) onColor else onColor.copy(alpha = 0.38f)
                         )
                     }
-                    // V4.3: the Save button is *always* clickable. The dirty flag
-// V5.0.2 — auto-save model (Samsung Notes, Apple Notes,
-                    // Google Keep). Edits are persisted on every keystroke
-                    // and the back arrow is the single exit point, so the
-                    // visible Save button is removed entirely — it implied
-                    // the user had to do something explicit which they don't.
                     Box {
                         IconButton(onClick = { menuExpanded = true }) {
                             Icon(
                                 imageVector = Icons.Filled.MoreVert,
-                                contentDescription = "More options"
+                                contentDescription = "More options",
+                                tint = onColor
                             )
                         }
                         DropdownMenu(
@@ -590,8 +557,6 @@ actions = {
                                     shareNote(context, state.title, state.content)
                                 }
                             )
-                            // V5.0: export the rich text as Markdown so the
-                            // recipient sees bold/list/lists preserved.
                             DropdownMenuItem(
                                 text = { Text("Share as Markdown") },
                                 leadingIcon = {
@@ -611,7 +576,7 @@ actions = {
                                         tint = MaterialTheme.colorScheme.error
                                     )
                                 },
-onClick = {
+                                onClick = {
                                     menuExpanded = false
                                     showDeleteConfirm = true
                                 }
@@ -620,10 +585,10 @@ onClick = {
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = headerBg,
-                    titleContentColor = MaterialTheme.colorScheme.onSurface,
-                    actionIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                    navigationIconContentColor = MaterialTheme.colorScheme.onSurface
+                    containerColor = cardBg,
+                    titleContentColor = onColor,
+                    actionIconContentColor = onColor,
+                    navigationIconContentColor = onColor
                 )
             )
         }
@@ -632,45 +597,71 @@ onClick = {
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .background(notesPageBackground())
-                .padding(horizontal = 16.dp, vertical = 16.dp)
+                .background(cardBg)
+                .padding(horizontal = 18.dp, vertical = 8.dp)
                 .imePadding()
         ) {
-            // Note card with INLINE blocks. V6: roomier — 20dp radius,
-            // 20/16 internal padding, no heavy shadow (a thin
-            // outlineVariant border separates it from the page).
-            Surface(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f),
-                shape = RoundedCornerShape(20.dp),
-                color = cardBg,
-                contentColor = MaterialTheme.colorScheme.onSurface,
-                border = BorderStroke(
-                    width = 1.dp,
-                    color = MaterialTheme.colorScheme.outlineVariant
-                )
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
             ) {
-                Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 20.dp)) {
-                    BlocksEditor(
-                        blocks = state.blocks,
-                        activeBlockId = state.activeBlockId,
-                        onBlockValueChange = viewModel::onBlockValueChange,
-                        onBlockFocused = viewModel::onBlockFocused,
-                        onToggleChecklistLine = { blockId, lineIndex ->
-                            viewModel.toggleChecklistLine(blockId, lineIndex)
-                        },
-                        onRemoveImage = { blockId -> viewModel.removeImageBlock(blockId) },
-                        onTapImage = { uri -> fullScreenImageUri = uri },
-                        failedImageUris = failedImageUris,
-                        onRetryImageUpload = { uri -> viewModel.retryImageUpload(uri) },
-                        autoFocusFirstBlock = true,
-                        autoFocusRequester = firstBlockFocusRequester
-                    )
-                }
+                BasicTextField(
+                    value = TextFieldValue(
+                        text = state.title,
+                        selection = TextRange(state.title.length)
+                    ),
+                    onValueChange = viewModel::onTitleChange,
+                    singleLine = false,
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                    textStyle = MaterialTheme.typography.headlineSmall.copy(
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = onColor
+                    ),
+                    keyboardOptions = KeyboardOptions(
+                        autoCorrectEnabled = false,
+                        capitalization = androidx.compose.ui.text.input.KeyboardCapitalization.Sentences
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 4.dp, bottom = 12.dp),
+                    decorationBox = { inner ->
+                        Box(modifier = Modifier.fillMaxWidth()) {
+                            if (state.title.isEmpty()) {
+                                Text(
+                                    text = "Title",
+                                    style = MaterialTheme.typography.headlineSmall.copy(
+                                        fontSize = 22.sp,
+                                        fontWeight = FontWeight.Bold
+                                    ),
+                                    color = onColor.copy(alpha = 0.45f)
+                                )
+                            }
+                            inner()
+                        }
+                    }
+                )
+
+                BlocksEditor(
+                    blocks = state.blocks,
+                    activeBlockId = state.activeBlockId,
+                    onBlockValueChange = viewModel::onBlockValueChange,
+                    onBlockFocused = viewModel::onBlockFocused,
+                    onToggleChecklistLine = { blockId, lineIndex ->
+                        viewModel.toggleChecklistLine(blockId, lineIndex)
+                    },
+                    onRemoveImage = { blockId -> viewModel.removeImageBlock(blockId) },
+                    onTapImage = { uri -> fullScreenImageUri = uri },
+                    failedImageUris = failedImageUris,
+                    onRetryImageUpload = { uri -> viewModel.retryImageUpload(uri) },
+                    autoFocusFirstBlock = true,
+                    autoFocusRequester = firstBlockFocusRequester
+                )
             }
 
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(4.dp))
 
             // V6: the formatting toolbar stays docked above the keyboard
             // (the screen Column has `imePadding()`, so the toolbar —
@@ -761,7 +752,9 @@ onClick = {
                     "Green" to noteCardColor(4),
                     "Orange" to noteCardColor(5),
                     "Purple" to noteCardColor(6),
-                    "Red" to noteCardColor(7)
+                    "Red" to noteCardColor(7),
+                    "Teal" to noteCardColor(8),
+                    "Clay" to noteCardColor(9)
                 ),
                 currentIndex = state.backgroundColor,
                 onSelect = { index ->

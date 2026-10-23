@@ -40,11 +40,13 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.DriveFileMove
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckBox
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudOff
-
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
@@ -70,6 +72,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FabPosition
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -203,7 +206,7 @@ fun NotesListScreen(
     var isSearchActive by remember { mutableStateOf(false) }
     var isSelectionMode by remember { mutableStateOf(false) }
     var selectedIds by remember { mutableStateOf(setOf<Long>()) }
-    var viewMode by remember { mutableStateOf(ViewMode.LINEAR) }
+    var viewMode by remember { mutableStateOf(ViewMode.GRID) }
     var showSortViewSheet by remember { mutableStateOf(false) }
     var longPressedNoteId by remember { mutableStateOf<Long?>(null) }
     var searchTimeFilter by remember { mutableStateOf(SearchTimeFilter.ALL) }
@@ -239,22 +242,77 @@ fun NotesListScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    when {
-                        isSelectionMode -> Column {
+            if (isSelectionMode) {
+                TopAppBar(
+                    title = {
+                        Text(
+                            text = "${selectedIds.size}",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold
+                        )
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = {
+                            isSelectionMode = false
+                            selectedIds = emptySet()
+                        }) {
+                            Icon(Icons.Filled.Close, contentDescription = "Exit selection")
+                        }
+                    },
+                    actions = {
+                        IconButton(onClick = {
+                            selectedIds.forEach { id ->
+                                val note = notes.find { it.id == id }
+                                if (note != null) viewModel.togglePin(note)
+                            }
+                            isSelectionMode = false
+                            selectedIds = emptySet()
+                        }) {
+                            Icon(Icons.Filled.PushPin, contentDescription = "Pin")
+                        }
+                        IconButton(onClick = {
+                            selectedIds.forEach { id ->
+                                val note = notes.find { it.id == id }
+                                if (note != null) viewModel.toggleFavorite(note)
+                            }
+                            isSelectionMode = false
+                            selectedIds = emptySet()
+                        }) {
+                            Icon(Icons.Filled.Star, contentDescription = "Favorite")
+                        }
+                        IconButton(onClick = {
+                            selectedIds.forEach { id ->
+                                val note = notes.find { it.id == id }
+                                if (note != null) {
+                                    if (filter == NotesFilter.TRASH) viewModel.deleteNote(note)
+                                    else viewModel.moveToTrash(note)
+                                }
+                            }
+                            isSelectionMode = false
+                            selectedIds = emptySet()
+                        }) {
+                            Icon(Icons.Filled.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error)
+                        }
+                        val allSelected = selectedIds.size == notes.size
+                        TextButton(onClick = {
+                            selectedIds = if (allSelected) emptySet() else notes.map { it.id }.toSet()
+                        }) {
                             Text(
-                                text = "${selectedIds.size} selected",
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = "of ${notes.size} notes",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                text = if (allSelected) "Deselect" else "All",
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.SemiBold
                             )
                         }
-                        isSearchActive -> SearchPillField(
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.surface,
+                        titleContentColor = MaterialTheme.colorScheme.onSurface
+                    )
+                )
+            } else if (isSearchActive) {
+                TopAppBar(
+                    title = {
+                        SearchPillField(
                             query = searchQuery,
                             onQueryChange = { onPerformSearch(it) },
                             focusRequester = searchFocusRequester,
@@ -262,128 +320,88 @@ fun NotesListScreen(
                                 .fillMaxWidth()
                                 .padding(vertical = 4.dp)
                         )
-                        else -> Column {
-                            Text(
-                                text = titleText,
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = "$noteCount notes",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            if (filter != NotesFilter.TRASH) {
-                                SyncStatusText(status = syncStatus)
-                            }
-                        }
-                    }
-                },
-                navigationIcon = {
-                    when {
-                        isSelectionMode -> IconButton(onClick = {
-                            isSelectionMode = false
-                            selectedIds = emptySet()
-                        }) {
-                            Icon(
-                                Icons.Filled.Close,
-                                contentDescription = "Exit selection"
-                            )
-                        }
-                        isSearchActive -> IconButton(onClick = {
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = {
                             isSearchActive = false
                             viewModel.onSearchQueryChange("")
                         }) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Close search"
-                            )
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Close search")
                         }
-                        else -> IconButton(onClick = onMenuClick) {
-                            Icon(Icons.Filled.Menu, contentDescription = "Menu")
-                        }
-                    }
-                },
-                actions = {
-                    if (isSelectionMode) {
-                        if (notes.isNotEmpty()) {
-                            val allSelected = selectedIds.size == notes.size
-                            TextButton(onClick = {
-                                selectedIds = if (allSelected) emptySet()
-                                else notes.map { it.id }.toSet()
-                            }) {
-                                Text(
-                                    text = if (allSelected) "Deselect all" else "Select all",
-                                    color = MaterialTheme.colorScheme.primary,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
-                        }
-                    } else if (filter == NotesFilter.TRASH) {
-                        if (notes.isNotEmpty()) {
-                            TextButton(onClick = {
-                                notes.forEach { viewModel.deleteNote(it) }
-                            }) {
-                                Text(
-                                    text = "Empty trash",
-                                    color = MaterialTheme.colorScheme.error,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
-                        }
-                    } else if (isSearchActive) {
-                        // Search mode: no extra actions.
-                    } else {
-                        IconButton(onClick = { viewModel.syncNow() }) {
-                            Icon(
-                                imageVector = Icons.Filled.Sync,
-                                contentDescription = "Sync"
-                            )
-                        }
-                        IconButton(onClick = { showSortViewSheet = true }) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.Sort,
-                                contentDescription = "Sort and view"
-                            )
-                        }
-                        IconButton(onClick = { isSearchActive = true }) {
-                            Icon(
-                                imageVector = Icons.Filled.Search,
-                                contentDescription = "Search"
-                            )
-                        }
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = notesHeaderBackground(),
-                    titleContentColor = MaterialTheme.colorScheme.onSurface,
-                    actionIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                    navigationIconContentColor = MaterialTheme.colorScheme.onSurface
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.surface
+                    )
                 )
-            )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                ) {
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(50.dp),
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        tonalElevation = 2.dp,
+                        shadowElevation = 1.dp
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            IconButton(onClick = onMenuClick) {
+                                Icon(Icons.Filled.Menu, contentDescription = "Menu")
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clickable { isSearchActive = true }
+                                    .padding(horizontal = 8.dp)
+                            ) {
+                                Text(
+                                    text = if (filter == NotesFilter.TRASH) "Search in Trash"
+                                    else if (filter == NotesFilter.FAVORITES) "Search in Favorites"
+                                    else "Search your notes",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            IconButton(onClick = {
+                                viewMode = if (viewMode == ViewMode.GRID) ViewMode.LINEAR else ViewMode.GRID
+                            }) {
+                                Icon(
+                                    imageVector = if (viewMode == ViewMode.GRID) Icons.Filled.ViewAgenda else Icons.Filled.GridView,
+                                    contentDescription = "Toggle Grid/List view"
+                                )
+                            }
+                            IconButton(onClick = { viewModel.syncNow() }) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .clip(CircleShape)
+                                        .background(MaterialTheme.colorScheme.primaryContainer),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "O",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         },
         floatingActionButton = {
-            if (!isSelectionMode && filter != NotesFilter.TRASH) {
-                ExtendedFloatingActionButton(
-                    onClick = onAddNote,
-                    icon = {
-                        Icon(
-                            imageVector = Icons.Filled.Edit,
-                            contentDescription = null
-                        )
-                    },
-                    text = {
-                        Text(
-                            text = "Compose",
-                            fontWeight = FontWeight.Bold
-                        )
-                    },
-                    shape = RoundedCornerShape(20.dp),
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    modifier = Modifier.navigationBarsPadding()
-                )
-            } else if (!isSelectionMode && filter == NotesFilter.TRASH && notes.isNotEmpty()) {
+            if (!isSelectionMode && filter == NotesFilter.TRASH && notes.isNotEmpty()) {
                 ExtendedFloatingActionButton(
                     onClick = {
                         notes.forEach { viewModel.restoreFromTrash(it) }
@@ -487,6 +505,64 @@ fun NotesListScreen(
                                 selectedIds = emptySet()
                             }
                         )
+                    }
+                }
+            } else if (filter != NotesFilter.TRASH) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = MaterialTheme.colorScheme.surfaceContainer,
+                    tonalElevation = 3.dp,
+                    border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .navigationBarsPadding()
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(onClick = onAddNote) {
+                            Icon(
+                                imageVector = Icons.Filled.CheckBox,
+                                contentDescription = "New list",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        IconButton(onClick = onAddNote) {
+                            Icon(
+                                imageVector = Icons.Filled.Brush,
+                                contentDescription = "New drawing",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        IconButton(onClick = onAddNote) {
+                            Icon(
+                                imageVector = Icons.Filled.Mic,
+                                contentDescription = "New audio",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        IconButton(onClick = onAddNote) {
+                            Icon(
+                                imageVector = Icons.Filled.Image,
+                                contentDescription = "New photo",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Spacer(Modifier.weight(1f))
+                        FloatingActionButton(
+                            onClick = onAddNote,
+                            shape = RoundedCornerShape(16.dp),
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.size(52.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Add,
+                                contentDescription = "New note",
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -634,7 +710,14 @@ fun NotesListScreen(
                                     if (isSelectionMode) toggleSelection(id)
                                     else if (filter != NotesFilter.TRASH) onNoteClick(id)
                                 },
-                                onLongPress = { id -> if (!isSelectionMode) longPressedNoteId = id },
+                                onLongPress = { id ->
+                                    if (!isSelectionMode && filter != NotesFilter.TRASH) {
+                                        isSelectionMode = true
+                                        selectedIds = setOf(id)
+                                    } else if (filter == NotesFilter.TRASH) {
+                                        longPressedNoteId = id
+                                    }
+                                },
                                 onToggleSelected = { id -> toggleSelection(id) },
                                 onRestoreNote = { viewModel.restoreFromTrash(it) },
                                 onPermanentDeleteNote = { viewModel.deleteNote(it) }
@@ -651,7 +734,14 @@ fun NotesListScreen(
                                     if (isSelectionMode) toggleSelection(id)
                                     else if (filter != NotesFilter.TRASH) onNoteClick(id)
                                 },
-                                onLongPress = { id -> if (!isSelectionMode) longPressedNoteId = id },
+                                onLongPress = { id ->
+                                    if (!isSelectionMode && filter != NotesFilter.TRASH) {
+                                        isSelectionMode = true
+                                        selectedIds = setOf(id)
+                                    } else if (filter == NotesFilter.TRASH) {
+                                        longPressedNoteId = id
+                                    }
+                                },
                                 onToggleSelected = { id -> toggleSelection(id) },
                                 onRestoreNote = { viewModel.restoreFromTrash(it) },
                                 onPermanentDeleteNote = { viewModel.deleteNote(it) }
@@ -1788,18 +1878,21 @@ private fun NoteCardContainer(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(18.dp))
+            .clip(RoundedCornerShape(12.dp))
             .combinedClickable(
                 onClick = onClick,
                 onLongClick = onLongClick
             ),
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = cardColor, contentColor = onColor),
         border = BorderStroke(
             width = if (isSelected) 2.dp else 1.dp,
             color = if (isSelected)
                 MaterialTheme.colorScheme.primary
-            else MaterialTheme.colorScheme.outlineVariant
+            else if (note.backgroundColor == 0)
+                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f)
+            else
+                Color.Transparent
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {

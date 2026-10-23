@@ -103,31 +103,26 @@ val DarkErrorContainer     = Color(0xFF93000A)
 val DarkOnErrorContainer   = Color(0xFFFFDAD6)
 
 /* =====================================================================
- * Note card backgrounds (8 swatches).
- *
- * Indices are stable — caller code (NotesListScreen, NoteEditScreen,
- * editor's color picker) uses 0..7 via [noteCardColor]. The light set
- * is a hand-picked pastel family desaturated toward the Forest palette;
- * the dark set is a darker, hue-shifted family keeping ~7–12% relative
- * luminance so cards stay subtly distinct from the page background.
- *
- * Text-on-color is fixed (`Forest950` light, `Mist100` dark) and every
- * swatch + text pair clears AAA (≥9:1). See Color.kt's contrast table.
+ * Google Keep Note Colors (M3 Palette)
  * ===================================================================== */
 val NoteColorDefault = Color(0xFFFFFFFF)
-val NoteColorYellow  = Color(0xFFE8F2A3)
-val NoteColorBlue    = Color(0xFFB6D6E1)
-val NoteColorPink    = Color(0xFFEBC9D8)
-val NoteColorGreen   = Color(0xFFB8D8BD)
-val NoteColorOrange  = Color(0xFFECCFA8)
-val NoteColorPurple  = Color(0xFFC9BFD9)
-val NoteColorRed     = Color(0xFFDDB3B3)
+val NoteColorYellow  = Color(0xFFFFF475) // Sand
+val NoteColorBlue    = Color(0xFFCBF0F8) // Dusk
+val NoteColorPink    = Color(0xFFFDCFE8) // Pink
+val NoteColorGreen   = Color(0xFFCCFF90) // Mint
+val NoteColorOrange  = Color(0xFFFBBC04) // Peach
+val NoteColorPurple  = Color(0xFFD7AEFB) // Purple
+val NoteColorRed     = Color(0xFFF28B82) // Coral
+val NoteColorTeal    = Color(0xFFA7FFEB) // Teal / Storm
+val NoteColorGray    = Color(0xFFE8EAED) // Clay
 
-val NoteColorDefaultDark = Forest900
-val NoteColorYellowDark  = Color(0xFF3F3A1A)
-val NoteColorBlueDark    = Color(0xFF163848)
-val NoteColorPinkDark    = Color(0xFF4A2433)
-val NoteColorGreenDark   = Color(0xFF1F3A2C)
-val NoteColorOrangeDark  = Color(0xFF4A2D14)
-val NoteColorPurpleDark  = Color(0xFF2E2338)
-val NoteColorRedDark     = Color(0xFF4A2424)
+val NoteColorDefaultDark = Color(0xFF202124)
+val NoteColorYellowDark  = Color(0xFF534E23)
+val NoteColorBlueDark    = Color(0xFF072731)
+val NoteColorPinkDark    = Color(0xFF42273B)
+val NoteColorGreenDark   = Color(0xFF16352E)
+val NoteColorOrangeDark  = Color(0xFF6A4F2A)
+val NoteColorPurpleDark  = Color(0xFF321F36)
+val NoteColorRedDark     = Color(0xFF77172E)
+val NoteColorTealDark    = Color(0xFF0C3B3E)
+val NoteColorGrayDark    = Color(0xFF3C2A21)
