@@ -39,6 +39,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.DriveFileMove
+import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Add
@@ -71,6 +72,7 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FabPosition
 import androidx.compose.material3.FloatingActionButton
@@ -179,7 +181,8 @@ fun NotesListScreen(
     filter: NotesFilter,
     onAddNote: () -> Unit,
     onNoteClick: (Long) -> Unit,
-    onMenuClick: () -> Unit
+    onMenuClick: () -> Unit,
+    onLogout: () -> Unit = {}
 ) {
     val notes by viewModel.notes.collectAsStateWithLifecycle()
     val noteCount by viewModel.noteCount.collectAsStateWithLifecycle()
@@ -203,6 +206,11 @@ fun NotesListScreen(
         }
     }
 
+    val activeEmail = remember {
+        com.example.notes.data.local.AuthStore.getActive(context)?.email ?: ""
+    }
+    val avatarLetter = activeEmail.take(1).uppercase().ifEmpty { "O" }
+    var showAccountDialog by remember { mutableStateOf(false) }
 
     var isSearchActive by remember { mutableStateOf(false) }
     var isSelectionMode by remember { mutableStateOf(false) }
@@ -381,7 +389,7 @@ fun NotesListScreen(
                                     contentDescription = "Toggle Grid/List view"
                                 )
                             }
-                            IconButton(onClick = { viewModel.syncNow() }) {
+                            IconButton(onClick = { showAccountDialog = true }) {
                                 Box(
                                     modifier = Modifier
                                         .size(32.dp)
@@ -390,7 +398,7 @@ fun NotesListScreen(
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Text(
-                                        text = "O",
+                                        text = avatarLetter,
                                         style = MaterialTheme.typography.titleSmall,
                                         fontWeight = FontWeight.Bold,
                                         color = MaterialTheme.colorScheme.onPrimaryContainer
@@ -425,6 +433,22 @@ fun NotesListScreen(
                     contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
                     modifier = Modifier.navigationBarsPadding()
                 )
+            } else if (!isSelectionMode && filter != NotesFilter.TRASH) {
+                FloatingActionButton(
+                    onClick = onAddNote,
+                    shape = RoundedCornerShape(18.dp),
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier
+                        .navigationBarsPadding()
+                        .size(60.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Add,
+                        contentDescription = "New note",
+                        modifier = Modifier.size(32.dp)
+                    )
+                }
             }
         },
         floatingActionButtonPosition = if (filter == NotesFilter.TRASH) FabPosition.Center else FabPosition.End,
@@ -507,64 +531,6 @@ fun NotesListScreen(
                                 selectedIds = emptySet()
                             }
                         )
-                    }
-                }
-            } else if (filter != NotesFilter.TRASH) {
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    color = MaterialTheme.colorScheme.surfaceContainer,
-                    tonalElevation = 3.dp,
-                    border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .navigationBarsPadding()
-                            .padding(horizontal = 12.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        IconButton(onClick = onAddNote) {
-                            Icon(
-                                imageVector = Icons.Filled.CheckBox,
-                                contentDescription = "New list",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        IconButton(onClick = onAddNote) {
-                            Icon(
-                                imageVector = Icons.Filled.Brush,
-                                contentDescription = "New drawing",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        IconButton(onClick = onAddNote) {
-                            Icon(
-                                imageVector = Icons.Filled.Mic,
-                                contentDescription = "New audio",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        IconButton(onClick = onAddNote) {
-                            Icon(
-                                imageVector = Icons.Filled.Image,
-                                contentDescription = "New photo",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Spacer(Modifier.weight(1f))
-                        FloatingActionButton(
-                            onClick = onAddNote,
-                            shape = RoundedCornerShape(16.dp),
-                            containerColor = MaterialTheme.colorScheme.primaryContainer,
-                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                            modifier = Modifier.size(52.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.Add,
-                                contentDescription = "New note",
-                                modifier = Modifier.size(28.dp)
-                            )
-                        }
                     }
                 }
             }
@@ -832,6 +798,106 @@ fun NotesListScreen(
             sort = sort,
             onSortChange = { viewModel.setSort(it) },
             onDismiss = { showSortViewSheet = false }
+        )
+    }
+
+    if (showAccountDialog) {
+        AlertDialog(
+            onDismissRequest = { showAccountDialog = false },
+            containerColor = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(28.dp),
+            tonalElevation = 4.dp,
+            title = {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Google Account",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(
+                        onClick = { showAccountDialog = false },
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Close,
+                            contentDescription = "Close",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Spacer(Modifier.height(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .size(64.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primaryContainer),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = avatarLetter,
+                            style = MaterialTheme.typography.headlineMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        text = if (activeEmail.isNotBlank()) activeEmail else "No account signed in",
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = "Google Keep Sync Faol",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(20.dp))
+                    HorizontalDivider(
+                        color = MaterialTheme.colorScheme.outlineVariant
+                    )
+                    Spacer(Modifier.height(16.dp))
+                    androidx.compose.material3.OutlinedButton(
+                        onClick = {
+                            showAccountDialog = false
+                            onLogout()
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(20.dp),
+                        border = androidx.compose.foundation.BorderStroke(
+                            1.dp,
+                            MaterialTheme.colorScheme.error.copy(alpha = 0.5f)
+                        )
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.Logout,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = "Chiqish (Log out)",
+                            color = MaterialTheme.colorScheme.error,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+            },
+            confirmButton = {}
         )
     }
 }

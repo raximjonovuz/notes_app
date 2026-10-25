@@ -29,7 +29,10 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PhoneAndroid
-import androidx.compose.material.icons.filled.Storage
+import android.content.Intent
+import android.net.Uri
+import androidx.compose.material.icons.automirrored.filled.HelpOutline
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -92,17 +95,12 @@ fun SettingsScreen(
     onRequireLogin: () -> Unit = {}
 ) {
     var selectedMode by remember { mutableStateOf(ThemeManager.themeMode) }
-    var dynamicOn by remember { mutableStateOf(ThemeManager.dynamicColorEnabled) }
 
     val context = LocalContext.current
     val authViewModel: AuthViewModel = viewModel(
         factory = AuthViewModel.factory(context.applicationContext as Application)
     )
     val authState by authViewModel.state.collectAsStateWithLifecycle()
-
-    // Confirmation dialogs
-    var showLogoutAllDialog by remember { mutableStateOf(false) }
-    var showLogoutOneDialog by remember { mutableStateOf<String?>(null) }
 
     Scaffold(
         topBar = {
@@ -198,26 +196,6 @@ fun SettingsScreen(
                         }
                     }
                 }
-
-                // V6 — dynamic color is Android 12+ only, so the switch
-                // is hidden entirely on older devices rather than
-                // showing a dead control.
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    HorizontalDivider(
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                        color = MaterialTheme.colorScheme.outlineVariant
-                    )
-                    SettingsSwitchRow(
-                        icon = Icons.Filled.PhoneAndroid,
-                        title = "Use device colors",
-                        subtitle = "Material You palette (Android 12+)",
-                        checked = dynamicOn,
-                        onCheckedChange = {
-                            dynamicOn = it
-                            ThemeManager.setDynamicColor(context, it)
-                        }
-                    )
-                }
             }
 
             /* ---------------- Account ---------------- */
@@ -271,9 +249,6 @@ fun SettingsScreen(
                                 if (session.email != authState.activeEmail) {
                                     authViewModel.switchAccount(session.email)
                                 }
-                            },
-                            onLogout = {
-                                showLogoutOneDialog = session.email
                             }
                         )
                     }
@@ -286,20 +261,23 @@ fun SettingsScreen(
                         icon = Icons.Filled.Add,
                         onClick = onLoginClick
                     )
-                    HorizontalDivider(
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                        color = MaterialTheme.colorScheme.outlineVariant
-                    )
-                    SettingsGroupAction(
-                        label = "Log out of all accounts",
-                        icon = Icons.AutoMirrored.Filled.Logout,
-                        tint = MaterialTheme.colorScheme.error,
-                        onClick = { showLogoutAllDialog = true }
-                    )
                 }
             }
 
+            /* ---------------- Contact ---------------- */
+            SectionHeader(title = "Contact")
 
+            SettingsGroup {
+                SettingsClickableRow(
+                    icon = Icons.AutoMirrored.Filled.Send,
+                    title = "Telegram",
+                    subtitle = "@raximjonov_admin",
+                    onClick = {
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://t.me/raximjonov_admin"))
+                        context.startActivity(intent)
+                    }
+                )
+            }
 
             /* ---------------- About ---------------- */
             SectionHeader(title = "About")
@@ -310,84 +288,8 @@ fun SettingsScreen(
                     title = "Version",
                     value = BuildConfig.VERSION_NAME
                 )
-                HorizontalDivider(
-                    modifier = Modifier.padding(start = 72.dp, end = 16.dp),
-                    color = MaterialTheme.colorScheme.outlineVariant
-                )
-                InfoRow(
-                    icon = Icons.Filled.Storage,
-                    title = "Storage",
-                    value = if (authState.activeEmail != null) "Local + cloud sync"
-                    else "Local only"
-                )
             }
         }
-    }
-
-    // ---- Dialogs ----
-    if (showLogoutAllDialog) {
-        AlertDialog(
-            onDismissRequest = { showLogoutAllDialog = false },
-            title = { Text("Log out of all accounts?") },
-            text = { Text("You will need to sign in again to sync your notes.") },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        showLogoutAllDialog = false
-                        authViewModel.logoutAll()
-                        onRequireLogin()
-                    }
-                ) {
-                    Text("Log out all")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showLogoutAllDialog = false }) {
-                    Text("Cancel")
-                }
-            }
-        )
-    }
-
-    showLogoutOneDialog?.let { email ->
-        val isActive = email == authState.activeEmail
-        AlertDialog(
-            onDismissRequest = { showLogoutOneDialog = null },
-            title = { Text(if (isActive) "Log out?" else "Remove account?") },
-            text = {
-                Text(
-                    if (isActive)
-                        "You will be signed out of $email."
-                    else
-                        "Remove $email from this device. You can sign in again anytime."
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        showLogoutOneDialog = null
-                        if (isActive) {
-                            // Active sign-out — keep saved session for re-login.
-                            authViewModel.logoutActive()
-                            onRequireLogin()
-                        } else {
-                            // Inactive remove — fully delete this saved account.
-                            authViewModel.removeAccount(email)
-                            if (authState.activeEmail == null) {
-                                onRequireLogin()
-                            }
-                        }
-                    }
-                ) {
-                    Text(if (isActive) "Log out" else "Remove")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showLogoutOneDialog = null }) {
-                    Text("Cancel")
-                }
-            }
-        )
     }
 }
 
@@ -516,6 +418,42 @@ private fun InfoRow(
     }
 }
 
+/** Clickable row with a leading icon, title, subtitle and action. */
+@Composable
+private fun SettingsClickableRow(
+    icon: ImageVector,
+    title: String,
+    subtitle: String?,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .heightIn(min = 56.dp)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        SettingsIconBadge(icon = icon)
+        Spacer(Modifier.size(16.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            if (subtitle != null) {
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
 /** Full-width tappable action row inside a group (no leading badge). */
 @Composable
 private fun SettingsGroupAction(
@@ -556,15 +494,14 @@ private fun SettingsGroupAction(
 private fun AccountRow(
     session: AuthStore.Session,
     isActive: Boolean,
-    onSwitch: () -> Unit,
-    onLogout: () -> Unit
+    onSwitch: () -> Unit
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onSwitch() }
             .heightIn(min = 56.dp)
-            .padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+            .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
@@ -608,13 +545,6 @@ private fun AccountRow(
                 imageVector = Icons.Filled.Check,
                 contentDescription = "Active",
                 tint = MaterialTheme.colorScheme.primary
-            )
-        }
-        IconButton(onClick = onLogout) {
-            Icon(
-                imageVector = Icons.AutoMirrored.Filled.Logout,
-                contentDescription = "Log out",
-                tint = MaterialTheme.colorScheme.error
             )
         }
     }

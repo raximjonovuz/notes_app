@@ -16,7 +16,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.HelpOutline
+import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.NoteAlt
@@ -176,10 +179,6 @@ private fun AppScreen(repository: NoteRepository, application: NotesApplication)
             // drawerState.close() when the area not covered by
             // drawerContent is tapped).
             drawerContent = {
-                val context = androidx.compose.ui.platform.LocalContext.current
-                val activeEmail = remember {
-                    com.example.notes.data.local.AuthStore.getActive(context)?.email ?: "raximjonozod1727@gmail.com"
-                }
                 ModalDrawerSheet(
                     modifier = Modifier
                         .width(minOf((configuration.screenWidthDp * 0.78f).dp, 320.dp))
@@ -192,57 +191,6 @@ private fun AppScreen(repository: NoteRepository, application: NotesApplication)
                         fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
                         modifier = Modifier.padding(horizontal = 24.dp, vertical = 20.dp)
                     )
-
-                    // Account Card per V2-10
-                    Surface(
-                        shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
-                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
-                        modifier = Modifier
-                            .padding(horizontal = 16.dp)
-                            .padding(bottom = 16.dp)
-                            .fillMaxWidth()
-                    ) {
-                        androidx.compose.foundation.layout.Row(
-                            modifier = Modifier.padding(12.dp),
-                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-                            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(12.dp)
-                        ) {
-                            androidx.compose.foundation.layout.Box(
-                                modifier = Modifier
-                                    .size(38.dp)
-                                    .clip(CircleShape)
-                                    .background(MaterialTheme.colorScheme.primaryContainer),
-                                contentAlignment = androidx.compose.ui.Alignment.Center
-                            ) {
-                                Text(
-                                    text = activeEmail.take(1).uppercase(),
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                            androidx.compose.foundation.layout.Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = activeEmail,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
-                                    maxLines = 1,
-                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    text = "Synced · just now",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Icon(
-                                imageVector = androidx.compose.material.icons.Icons.Filled.Check,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-                    }
 
                     val navItemColors = NavigationDrawerItemDefaults.colors(
                         selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
@@ -333,18 +281,6 @@ private fun AppScreen(repository: NoteRepository, application: NotesApplication)
                     )
 
                     NavigationDrawerItem(
-                        icon = { Icon(Icons.AutoMirrored.Filled.HelpOutline, contentDescription = null) },
-                        label = { Text("Help & feedback", style = MaterialTheme.typography.bodyMedium, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium) },
-                        selected = false,
-                        shape = RoundedCornerShape(24.dp),
-                        colors = navItemColors,
-                        onClick = {
-                            scope.launch { drawerState.close() }
-                        },
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
-                    )
-
-                    NavigationDrawerItem(
                         icon = { Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
                         label = { Text("Log out", style = MaterialTheme.typography.bodyMedium, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium, color = MaterialTheme.colorScheme.error) },
                         selected = false,
@@ -420,17 +356,47 @@ private fun AppNavHost(
     drawerState: DrawerState,
     scope: CoroutineScope
 ) {
+    val handleLogout: () -> Unit = {
+        scope.launch {
+            drawerState.close()
+            com.example.notes.data.remote.AuthRepository(application).clearAll()
+            navController.navigate(Routes.LOGIN) {
+                popUpTo(navController.graph.id) { inclusive = true }
+            }
+        }
+    }
+
     NavHost(
         navController = navController,
-        startDestination = Routes.SPLASH
+        startDestination = Routes.SPLASH,
+        enterTransition = {
+            fadeIn(animationSpec = tween(260)) + slideIntoContainer(
+                AnimatedContentTransitionScope.SlideDirection.Start,
+                animationSpec = tween(260)
+            )
+        },
+        exitTransition = {
+            fadeOut(animationSpec = tween(220)) + slideOutOfContainer(
+                AnimatedContentTransitionScope.SlideDirection.Start,
+                animationSpec = tween(220)
+            )
+        },
+        popEnterTransition = {
+            fadeIn(animationSpec = tween(260)) + slideIntoContainer(
+                AnimatedContentTransitionScope.SlideDirection.End,
+                animationSpec = tween(260)
+            )
+        },
+        popExitTransition = {
+            fadeOut(animationSpec = tween(220)) + slideOutOfContainer(
+                AnimatedContentTransitionScope.SlideDirection.End,
+                animationSpec = tween(220)
+            )
+        }
     ) {
         composable(Routes.SPLASH) {
             SplashScreen(
                 onTimeout = {
-                    // Cold-start routing: if we already have an active
-                    // session, jump straight into the notes list;
-                    // otherwise land on the login screen (the new entry
-                    // point for unauthenticated users).
                     val hasActiveSession =
                         com.example.notes.data.local.AuthStore.getActive(application) != null
                     val destination =
@@ -453,14 +419,14 @@ private fun AppNavHost(
                     navController.navigate(Routes.noteEdit(noteId))
                 },
                 onMenuClick = {
-                    // Menu button toggles the drawer.
                     scope.launch {
                         when {
                             drawerState.isClosed -> drawerState.open()
                             else -> drawerState.close()
                         }
                     }
-                }
+                },
+                onLogout = handleLogout
             )
         }
 
@@ -481,7 +447,8 @@ private fun AppNavHost(
                             else -> drawerState.close()
                         }
                     }
-                }
+                },
+                onLogout = handleLogout
             )
         }
 
@@ -498,7 +465,8 @@ private fun AppNavHost(
                             else -> drawerState.close()
                         }
                     }
-                }
+                },
+                onLogout = handleLogout
             )
         }
 

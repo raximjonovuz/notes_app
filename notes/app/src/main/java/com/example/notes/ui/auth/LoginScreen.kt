@@ -60,6 +60,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -72,10 +75,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.notes.data.local.AuthStore
 import com.example.notes.ui.splash.BrandMark
-import com.example.notes.ui.theme.Forest900
-import com.example.notes.ui.theme.Forest950
-import com.example.notes.ui.theme.Mist100
-import com.example.notes.ui.theme.Sage400
 import com.example.notes.util.Logger
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
@@ -196,8 +195,18 @@ fun LoginScreen(
         if (isEntryPoint && state.isAuthenticated) onAuthenticated()
     }
 
+    val view = LocalView.current
+    if (!view.isInEditMode) {
+        SideEffect {
+            val window = (context as? Activity)?.window
+            if (window != null) {
+                WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = true
+            }
+        }
+    }
+
     Scaffold(
-        containerColor = Color.Transparent,
+        containerColor = Color.White,
         topBar = {
             TopAppBar(
                 title = {
@@ -205,7 +214,7 @@ fun LoginScreen(
                         text = "Sign in",
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.SemiBold,
-                        color = Mist100
+                        color = Color(0xFF202124)
                     )
                 },
                 navigationIcon = {
@@ -214,28 +223,24 @@ fun LoginScreen(
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                                 contentDescription = "Back",
-                                tint = Mist100
+                                tint = Color(0xFF202124)
                             )
                         }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Transparent,
-                    titleContentColor = Mist100,
-                    navigationIconContentColor = Mist100
+                    containerColor = Color.White,
+                    titleContentColor = Color(0xFF202124),
+                    navigationIconContentColor = Color(0xFF202124)
                 )
             )
         }
     ) { innerPadding ->
-        // V6 — the screen body sits on the same Forest gradient as the
-        // splash so the brand is consistent across both surfaces.
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .background(
-                    Brush.verticalGradient(colors = listOf(Forest950, Forest900))
-                )
+                .background(Color.White)
                 .imePadding()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp, vertical = 32.dp),
@@ -261,7 +266,7 @@ fun LoginScreen(
                     text = "Saved accounts",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
-                    color = Mist100,
+                    color = Color(0xFF202124),
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(start = 4.dp, bottom = 8.dp)
@@ -290,73 +295,74 @@ fun LoginScreen(
                 Spacer(Modifier.height(28.dp))
             }
 
-            // V6 — primary action (Google) is a filled, full-width
-            // button at 56dp with the brand teal. Loading state shows
-            // the spinner inline so the user knows the round-trip is
-            // in flight.
-            Button(
+            Surface(
                 onClick = {
                     val activity = context as? Activity
                     if (activity == null) {
                         viewModel.setGoogleError("Sign-in requires a foreground screen.")
-                        return@Button
+                        return@Surface
                     }
                     scope.launch { launchGoogleSignIn(activity) }
                 },
                 enabled = !state.isGoogleLoading && !inFlight,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(56.dp),
-                shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Sage400,
-                    contentColor = Forest950
-                )
+                    .height(52.dp),
+                shape = RoundedCornerShape(26.dp),
+                color = Color.White,
+                shadowElevation = 1.dp,
+                border = BorderStroke(1.dp, Color(0xFFDADCE0))
             ) {
-                if (state.isGoogleLoading) {
-                    CircularProgressIndicator(
-                        strokeWidth = 2.dp,
-                        modifier = Modifier.size(20.dp),
-                        color = Forest950
-                    )
-                    Spacer(Modifier.size(12.dp))
-                    Text(
-                        text = "Connecting…",
-                        style = MaterialTheme.typography.titleMedium
-                    )
-                } else {
-                    Box(
-                        modifier = Modifier
-                            .size(24.dp)
-                            .clip(CircleShape)
-                            .background(Color.White),
-                        contentAlignment = Alignment.Center
-                    ) {
+                Row(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    if (state.isGoogleLoading) {
+                        CircularProgressIndicator(
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(20.dp),
+                            color = Color(0xFF1A73E8)
+                        )
+                        Spacer(Modifier.size(12.dp))
                         Text(
-                            text = "G",
-                            color = Forest950,
-                            fontWeight = FontWeight.Bold,
-                            style = MaterialTheme.typography.labelLarge
+                            text = "Connecting…",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = Color(0xFF1F1F1F)
+                        )
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .size(24.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF4285F4)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "G",
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.labelLarge
+                            )
+                        }
+                        Spacer(Modifier.size(12.dp))
+                        Text(
+                            text = "Continue with Google",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Medium,
+                            color = Color(0xFF1F1F1F)
                         )
                     }
-                    Spacer(Modifier.size(12.dp))
-                    Text(
-                        text = "Continue with Google",
-                        style = MaterialTheme.typography.titleMedium
-                    )
                 }
             }
 
             if (state.errorMessage != null) {
                 Spacer(Modifier.height(16.dp))
-                // V6 — error gets its own visual treatment: tonal card
-                // with the error-on-container role so the message is
-                // never a wall of red text.
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.errorContainer,
-                    contentColor = MaterialTheme.colorScheme.onErrorContainer
+                    color = Color(0xFFFFDAD6),
+                    contentColor = Color(0xFF410002)
                 ) {
                     Text(
                         text = state.errorMessage ?: "",
@@ -370,7 +376,7 @@ fun LoginScreen(
             Text(
                 text = "Your notes are private to you. We never read them.",
                 style = MaterialTheme.typography.bodySmall,
-                color = Sage400.copy(alpha = 0.6f),
+                color = Color(0xFF5F6368),
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center
             )
         }
@@ -396,20 +402,21 @@ private fun BrandHeader() {
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        BrandMark(sizeDp = 72)
+        BrandMark(sizeDp = 80)
         Spacer(Modifier.height(16.dp))
         Text(
             text = "Notes",
             style = MaterialTheme.typography.headlineLarge.copy(
-                letterSpacing = (-0.5).sp
+                letterSpacing = (-0.5).sp,
+                fontWeight = FontWeight.Bold
             ),
-            color = Mist100
+            color = Color(0xFF202124)
         )
         Spacer(Modifier.height(8.dp))
         Text(
             text = "Sign in to sync your notes across devices.",
             style = MaterialTheme.typography.bodyMedium,
-            color = Sage400.copy(alpha = 0.85f),
+            color = Color(0xFF5F6368),
             textAlign = androidx.compose.ui.text.style.TextAlign.Center
         )
     }
@@ -422,13 +429,9 @@ private fun SavedAccountRow(
     onTap: () -> Unit,
     onRemove: () -> Unit
 ) {
-    // V6 — saved-account row on the forest-tinted login screen: use
-    // a translucent forest tile with a sage avatar so it sits in the
-    // brand context without breaking the gradient.
-    val container = if (isActive)
-        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.85f)
-    else Forest900
-    val content = MaterialTheme.colorScheme.onPrimaryContainer
+    val container = if (isActive) Color(0xFFE8F0FE) else Color(0xFFF8F9FA)
+    val content = if (isActive) Color(0xFF1967D2) else Color(0xFF202124)
+    val borderCol = if (isActive) Color(0xFF1A73E8) else Color(0xFFDADCE0)
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -438,9 +441,7 @@ private fun SavedAccountRow(
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         border = BorderStroke(
             width = 1.dp,
-            color = if (isActive)
-                MaterialTheme.colorScheme.primary
-            else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+            color = borderCol
         )
     ) {
         Row(
@@ -453,13 +454,14 @@ private fun SavedAccountRow(
                 modifier = Modifier
                     .size(40.dp)
                     .clip(CircleShape)
-                    .background(Sage400.copy(alpha = 0.30f)),
+                    .background(Color(0xFF1A73E8).copy(alpha = 0.15f)),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     text = session.email.take(1).uppercase(),
                     style = MaterialTheme.typography.titleMedium,
-                    color = Mist100
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF1A73E8)
                 )
             }
             Spacer(Modifier.size(12.dp))
@@ -468,19 +470,19 @@ private fun SavedAccountRow(
                     text = session.email,
                     style = MaterialTheme.typography.bodyLarge,
                     fontWeight = FontWeight.Medium,
-                    color = Mist100
+                    color = Color(0xFF202124)
                 )
                 if (isActive) {
                     Text(
                         text = "Active",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary
+                        color = Color(0xFF1A73E8)
                     )
                 } else {
                     Text(
                         text = "Tap to switch",
                         style = MaterialTheme.typography.bodySmall,
-                        color = Sage400.copy(alpha = 0.7f)
+                        color = Color(0xFF5F6368)
                     )
                 }
             }
@@ -488,14 +490,14 @@ private fun SavedAccountRow(
                 Icon(
                     imageVector = Icons.Filled.Check,
                     contentDescription = "Active",
-                    tint = MaterialTheme.colorScheme.primary
+                    tint = Color(0xFF1A73E8)
                 )
             } else {
                 IconButton(onClick = onRemove) {
                     Icon(
                         imageVector = Icons.Filled.Close,
                         contentDescription = "Remove account",
-                        tint = Mist100
+                        tint = Color(0xFF5F6368)
                     )
                 }
             }

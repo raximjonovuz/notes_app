@@ -90,42 +90,15 @@ fun BrandMark(
 
 @Composable
 fun SplashScreen(onTimeout: () -> Unit) {
-    // V5.3.4 / F-28 — wait for the one-time image-path migration to
-    // settle before opening the rest of the UI. See file header comment
-    // on the V5 line for the full rationale.
-    var ready by remember { mutableStateOf(false) }
-
     LaunchedEffect(Unit) {
-        try {
-            val gate = withTimeoutOrNull(SPLASH_GATE_TIMEOUT_MS) {
-                LocalImageMigration.completionSignal.await()
-            }
-            if (gate == null) {
-                Logger.w(
-                    "SplashScreen",
-                    "image migration gate timed out after " +
-                        "${SPLASH_GATE_TIMEOUT_MS}ms; opening UI anyway"
-                )
-            }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (t: Throwable) {
-            Logger.w("SplashScreen",
-                "unexpected error awaiting image migration", t)
-        }
-        delay(300)
-        ready = true
+        delay(800)
         onTimeout()
     }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(Forest950, Forest900)
-                )
-            ),
+            .background(Color.White),
         contentAlignment = Alignment.Center
     ) {
         AnimatedVisibility(
@@ -142,54 +115,24 @@ fun SplashScreen(onTimeout: () -> Unit) {
                 verticalArrangement = Arrangement.Center,
                 modifier = Modifier.fillMaxSize()
             ) {
-                Spacer(Modifier.height(0.dp))
                 BrandMark(sizeDp = 96)
                 Spacer(Modifier.height(24.dp))
                 Text(
                     text = "Notes",
                     style = MaterialTheme.typography.headlineMedium.copy(
                         fontSize = 32.sp,
-                        letterSpacing = (-0.5).sp
+                        letterSpacing = (-0.5).sp,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
                     ),
-                    color = Mist100
+                    color = Color(0xFF202124)
                 )
                 Spacer(Modifier.height(8.dp))
                 Text(
                     text = "Capture what's on your mind",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = Sage400.copy(alpha = 0.85f)
+                    color = Color(0xFF5F6368)
                 )
-                Spacer(Modifier.height(48.dp))
-                SlowPulseLoader(label = "Loading...")
             }
         }
     }
-}
-
-@Composable
-private fun SlowPulseLoader(label: String) {
-    // Subtle pulse-driven dotted ring (sage against the forest
-    // background). Faster than a 5-second indeterminate cycle,
-    // slower than a frantic spinner — matches the calm brand.
-    val transition = rememberInfiniteTransition(label = "pulse")
-    val alpha by transition.animateFloat(
-        initialValue = 0.35f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(900, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "pulse-alpha"
-    )
-    CircularProgressIndicator(
-        modifier = Modifier.size(28.dp),
-        strokeWidth = 2.dp,
-        color = Sage400.copy(alpha = alpha)
-    )
-    Spacer(Modifier.height(16.dp))
-    Text(
-        text = label,
-        style = MaterialTheme.typography.bodyMedium,
-        color = Sage400.copy(alpha = 0.75f)
-    )
 }

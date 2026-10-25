@@ -141,8 +141,8 @@ object ThemeManager {
     var themeMode by mutableStateOf(ThemeMode.LIGHT)
         private set
 
-    /** Dynamic color on/off — Android 12+. */
-    var dynamicColorEnabled by mutableStateOf(false)
+    /** Dynamic color on/off — Android 12+. Defaults to true for device colors. */
+    var dynamicColorEnabled by mutableStateOf(true)
         private set
 
     /**
@@ -221,7 +221,7 @@ object ThemeManager {
             ThemeMode.DARK  -> true
             ThemeMode.SYSTEM -> false
         }
-        dynamicColorEnabled = prefs.getBoolean(KEY_DYNAMIC_COLOR, false)
+        dynamicColorEnabled = true
         return mode
     }
 }

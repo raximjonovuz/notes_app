@@ -171,23 +171,6 @@ private fun shareNote(context: Context, title: String, content: String) {
     context.startActivity(chooser)
 }
 
-/**
- * V5.0 — share the note's blocks rendered as Markdown. Recipients
- * (Obsidian, GitHub, Notion, etc.) that understand `**bold**`, `_italics_`
- * etc. will preserve the formatting.
- */
-private fun shareMarkdown(context: Context, title: String, blocks: List<ContentBlock>) {
-    val body = com.example.notes.util.MarkdownExporter.exportBlocks(blocks)
-    val intent = Intent(Intent.ACTION_SEND).apply {
-        type = "text/markdown"
-        putExtra(Intent.EXTRA_SUBJECT, title.ifBlank { "Note" })
-        putExtra(Intent.EXTRA_TEXT, body)
-    }
-    val chooser = Intent.createChooser(intent, "Share as Markdown")
-    chooser.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-    context.startActivity(chooser)
-}
-
 /* -----------------------------------------------------------------------
  * VisualTransformation that renders the underlying TextFieldValue text as
  * an AnnotatedString built from the block's styleRanges. Per-character
@@ -483,6 +466,7 @@ fun NoteEditScreen(
                             tint = if (state.isPinned) MaterialTheme.colorScheme.primary else onColor
                         )
                     }
+                    /*
                     IconButton(onClick = {
                         scope.launch {
                             snackbarHostState.showSnackbar(
@@ -497,6 +481,7 @@ fun NoteEditScreen(
                             tint = onColor
                         )
                     }
+                    */
                     IconButton(onClick = { viewModel.toggleFavorite() }) {
                         Icon(
                             imageVector = if (state.isFavorite) Icons.Filled.Star else Icons.Filled.StarBorder,
@@ -548,23 +533,13 @@ fun NoteEditScreen(
                             )
                             HorizontalDivider()
                             DropdownMenuItem(
-                                text = { Text("Share as text") },
+                                text = { Text("Share") },
                                 leadingIcon = {
                                     Icon(Icons.Filled.Share, contentDescription = null)
                                 },
                                 onClick = {
                                     menuExpanded = false
                                     shareNote(context, state.title, state.content)
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Share as Markdown") },
-                                leadingIcon = {
-                                    Icon(Icons.Filled.Code, contentDescription = null)
-                                },
-                                onClick = {
-                                    menuExpanded = false
-                                    shareMarkdown(context, state.title, state.blocks)
                                 }
                             )
                             DropdownMenuItem(
@@ -672,28 +647,15 @@ fun NoteEditScreen(
                 isUnderlineActive = isUnderlineActive,
                 isStrikethroughActive = isStrikethroughActive,
                 activeTextColorIndex = activeTextColor,
-                textAlignIndex = activeTextAlign,
-                listType = activeListType,
-                isChecklistActive = activeIsChecklist,
-                // V5.1 — checklist rows ignore list/alignment controls; the
-                // toolbar hides those buttons entirely to avoid noise.
-                hideListControls = activeIsChecklist,
                 onAddImage = { imagePickerLauncher.launch("image/*") },
                 onBackgroundColorClick = { bgColorPickerVisible = true },
                 onBoldClick = viewModel::toggleBold,
                 onItalicClick = viewModel::toggleItalic,
                 onUnderlineClick = viewModel::toggleUnderline,
                 onStrikethroughClick = viewModel::toggleStrikethrough,
-                onBulletClick = { viewModel.setListType(if (activeListType == 1) 0 else 1) },
-                onNumberedClick = { viewModel.setListType(if (activeListType == 2) 0 else 2) },
-                onChecklistClick = viewModel::toggleChecklist,
-                onAlignLeftClick = { viewModel.setTextAlign(0) },
-                onAlignCenterClick = { viewModel.setTextAlign(1) },
-                onAlignRightClick = { viewModel.setTextAlign(2) },
                 onDecreaseSizeClick = viewModel::decreaseTextSize,
                 onIncreaseSizeClick = viewModel::increaseTextSize,
-                onShowTextColorPicker = { textColorPickerVisible = true },
-                onOpenInsertFormat = { insertFormatVisible = true }
+                onShowTextColorPicker = { textColorPickerVisible = true }
             )
         }
     }
@@ -848,39 +810,16 @@ private fun EditorToolbar(
     isUnderlineActive: Boolean,
     isStrikethroughActive: Boolean,
     activeTextColorIndex: Int,
-    textAlignIndex: Int,
-    listType: Int,
-    isChecklistActive: Boolean,
-    /**
-     * V5.1 — when the active block is a checklist, list-type and
-     * alignment controls are hidden because they don't make sense on a
-     * row-of-checkboxes layout. The rest of the toolbar (B/I/U, color,
-     * size, image, background) still applies per-character to the
-     * checklist text.
-     */
-    hideListControls: Boolean = false,
     onAddImage: () -> Unit,
     onBackgroundColorClick: () -> Unit,
     onBoldClick: () -> Unit,
     onItalicClick: () -> Unit,
     onUnderlineClick: () -> Unit,
     onStrikethroughClick: () -> Unit,
-    onBulletClick: () -> Unit,
-    onNumberedClick: () -> Unit,
-    onChecklistClick: () -> Unit,
-    onAlignLeftClick: () -> Unit,
-    onAlignCenterClick: () -> Unit,
-    onAlignRightClick: () -> Unit,
     onDecreaseSizeClick: () -> Unit,
     onIncreaseSizeClick: () -> Unit,
-    onShowTextColorPicker: () -> Unit,
-    onOpenInsertFormat: () -> Unit
+    onShowTextColorPicker: () -> Unit
 ) {
-    // V5.0.1 — single horizontal row, scrollable, vertically compact.
-    // The previous two-row variant wasted ~56dp of vertical space and
-    // forced the user to remember which controls lived on which row.
-    // Now everything is one fluid toolbar; groups are still separated
-    // by thin vertical dividers so the eye can parse it.
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -892,15 +831,6 @@ private fun EditorToolbar(
         horizontalArrangement = Arrangement.spacedBy(2.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // V5.1.2 toolbar order, dictated by user feedback:
-        //   1. Image
-        //   2. Background color (note card)
-        //   3. Text color
-        //   4. Visual formatting  (Bold / Italic / Underline / Strike)
-        //   5. Size              (A− / Aa / A+)
-        //   6. Lists             (Bullet / Numbered / Checklist)
-        //   7. Alignment         (Left / Center / Right)
-
         ToolbarIconButton(
             imageVector = Icons.Filled.Image,
             contentDescription = "Image",
@@ -996,64 +926,6 @@ private fun EditorToolbar(
                 modifier = Modifier.size(20.dp)
             )
         }
-
-        ToolbarDivider()
-
-        // V5.1.2 — list controls are hidden when the active block is a
-        // checklist because each row would behave like its own line and
-        // the "block-level" list type doesn't make sense per row.
-        if (!hideListControls) {
-            ToolbarIconButton(
-                imageVector = Icons.AutoMirrored.Filled.FormatListBulleted,
-                contentDescription = "Bullet list",
-                onClick = onBulletClick,
-                active = listType == 1
-            )
-            ToolbarIconButton(
-                imageVector = Icons.Filled.FormatListNumbered,
-                contentDescription = "Numbered list",
-                onClick = onNumberedClick,
-                active = listType == 2
-            )
-            ToolbarIconButton(
-                imageVector = Icons.Filled.Checklist,
-                contentDescription = "Checklist",
-                onClick = onChecklistClick,
-                active = isChecklistActive
-            )
-        }
-
-        ToolbarDivider()
-
-        ToolbarIconButton(
-            imageVector = Icons.AutoMirrored.Filled.FormatAlignLeft,
-            contentDescription = "Align left",
-            onClick = onAlignLeftClick,
-            active = textAlignIndex == 0,
-            enabled = !hideListControls
-        )
-        ToolbarIconButton(
-            imageVector = Icons.Filled.FormatAlignCenter,
-            contentDescription = "Align center",
-            onClick = onAlignCenterClick,
-            active = textAlignIndex == 1,
-            enabled = !hideListControls
-        )
-        ToolbarIconButton(
-            imageVector = Icons.AutoMirrored.Filled.FormatAlignRight,
-            contentDescription = "Align right",
-            onClick = onAlignRightClick,
-            active = textAlignIndex == 2,
-            enabled = !hideListControls
-        )
-
-        ToolbarDivider()
-
-        ToolbarIconButton(
-            imageVector = Icons.Filled.AddCircleOutline,
-            contentDescription = "Insert format",
-            onClick = onOpenInsertFormat
-        )
     }
 }
 
