@@ -112,6 +112,7 @@ import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -459,11 +460,23 @@ fun NoteEditScreen(
                     }
                 },
                 actions = {
+                    val pinScale by androidx.compose.animation.core.animateFloatAsState(
+                        targetValue = if (state.isPinned) 1.22f else 1.0f,
+                        animationSpec = androidx.compose.animation.core.spring(
+                            dampingRatio = androidx.compose.animation.core.Spring.DampingRatioMediumBouncy,
+                            stiffness = androidx.compose.animation.core.Spring.StiffnessLow
+                        ),
+                        label = "pinBounce"
+                    )
                     IconButton(onClick = { viewModel.togglePinned() }) {
                         Icon(
                             imageVector = if (state.isPinned) Icons.Filled.PushPin else Icons.Outlined.PushPin,
                             contentDescription = if (state.isPinned) "Unpin" else "Pin",
-                            tint = if (state.isPinned) MaterialTheme.colorScheme.primary else onColor
+                            tint = if (state.isPinned) MaterialTheme.colorScheme.primary else onColor,
+                            modifier = Modifier.graphicsLayer {
+                                scaleX = pinScale
+                                scaleY = pinScale
+                            }
                         )
                     }
                     /*
@@ -482,11 +495,23 @@ fun NoteEditScreen(
                         )
                     }
                     */
+                    val starScale by androidx.compose.animation.core.animateFloatAsState(
+                        targetValue = if (state.isFavorite) 1.25f else 1.0f,
+                        animationSpec = androidx.compose.animation.core.spring(
+                            dampingRatio = androidx.compose.animation.core.Spring.DampingRatioMediumBouncy,
+                            stiffness = androidx.compose.animation.core.Spring.StiffnessLow
+                        ),
+                        label = "starBounce"
+                    )
                     IconButton(onClick = { viewModel.toggleFavorite() }) {
                         Icon(
                             imageVector = if (state.isFavorite) Icons.Filled.Star else Icons.Filled.StarBorder,
                             contentDescription = "Favorite",
-                            tint = if (state.isFavorite) Color(0xFFF4B400) else onColor
+                            tint = if (state.isFavorite) Color(0xFFF4B400) else onColor,
+                            modifier = Modifier.graphicsLayer {
+                                scaleX = starScale
+                                scaleY = starScale
+                            }
                         )
                     }
                     IconButton(

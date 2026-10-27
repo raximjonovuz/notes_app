@@ -28,6 +28,7 @@ data class AuthUiState(
     val savedAccounts: List<AuthStore.Session> = emptyList(),
     val activeEmail: String? = null,
     val isGoogleLoading: Boolean = false,
+    val isLoading: Boolean = false,
     /**
      * C3 — per-attempt replay-protection nonce. The login screen
      * generates a random UUID, hashes it with SHA-256 (the value
@@ -144,11 +145,13 @@ class AuthViewModel(
     /**
      * Password-based login. Supported for backwards-compatibility and tests.
      */
-    fun submitPassword(email: String, password: String, onDone: (Boolean) -> Unit = {}) {
+    fun login(email: String, password: String, onDone: (Boolean) -> Unit = {}) {
+        _state.value = _state.value.copy(isLoading = true, errorMessage = null)
         viewModelScope.launch {
             val result = repository.login(email, password)
             result.onSuccess { session ->
                 _state.value = _state.value.copy(
+                    isLoading = false,
                     isAuthenticated = true,
                     sessionEmail = session.email,
                     savedAccounts = repository.allSessions(),
@@ -158,7 +161,35 @@ class AuthViewModel(
                 onDone(true)
             }.onFailure { err ->
                 _state.value = _state.value.copy(
+                    isLoading = false,
                     errorMessage = err.localizedMessage ?: "Login failed."
+                )
+                onDone(false)
+            }
+        }
+    }
+
+    fun submitPassword(email: String, password: String, onDone: (Boolean) -> Unit = {}) =
+        login(email, password, onDone)
+
+    fun register(email: String, password: String, onDone: (Boolean) -> Unit = {}) {
+        _state.value = _state.value.copy(isLoading = true, errorMessage = null)
+        viewModelScope.launch {
+            val result = repository.register(email, password)
+            result.onSuccess { session ->
+                _state.value = _state.value.copy(
+                    isLoading = false,
+                    isAuthenticated = true,
+                    sessionEmail = session.email,
+                    savedAccounts = repository.allSessions(),
+                    activeEmail = session.email
+                )
+                onLoginSucceeded()
+                onDone(true)
+            }.onFailure { err ->
+                _state.value = _state.value.copy(
+                    isLoading = false,
+                    errorMessage = err.localizedMessage ?: "Registration failed."
                 )
                 onDone(false)
             }

@@ -1,6 +1,7 @@
 package com.example.notes.ui.notes
 
 import android.content.Context
+import com.example.notes.ui.theme.bounceScale
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
@@ -434,13 +435,16 @@ fun NotesListScreen(
                     modifier = Modifier.navigationBarsPadding()
                 )
             } else if (!isSelectionMode && filter != NotesFilter.TRASH) {
+                val fabInteractionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
                 FloatingActionButton(
                     onClick = onAddNote,
+                    interactionSource = fabInteractionSource,
                     shape = RoundedCornerShape(18.dp),
                     containerColor = MaterialTheme.colorScheme.primaryContainer,
                     contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
                     modifier = Modifier
                         .navigationBarsPadding()
+                        .bounceScale(fabInteractionSource, scaleDown = 0.90f)
                         .size(60.dp)
                 ) {
                     Icon(
@@ -1356,12 +1360,31 @@ private enum class EmptyIllustrationKind { NOTE, SEARCH, FAVORITE, TRASH }
 private fun EmptyIllustration(kind: EmptyIllustrationKind) {
     val outline = MaterialTheme.colorScheme.onPrimaryContainer
     val accent = MaterialTheme.colorScheme.primary
-    Canvas(modifier = Modifier.size(120.dp)) {
-        when (kind) {
-            EmptyIllustrationKind.NOTE -> drawNoteIllustration(accent, outline)
-            EmptyIllustrationKind.SEARCH -> drawSearchIllustration(accent, outline)
-            EmptyIllustrationKind.FAVORITE -> drawFavoriteIllustration(accent, outline)
-            EmptyIllustrationKind.TRASH -> drawTrashIllustration(accent, outline)
+    when (kind) {
+        EmptyIllustrationKind.NOTE -> {
+            com.example.notes.ui.components.AnimatedEmptyNotes(
+                size = 120.dp,
+                accentColor = accent,
+                outlineColor = outline
+            )
+        }
+        EmptyIllustrationKind.SEARCH -> {
+            com.example.notes.ui.components.AnimatedEmptySearch(
+                size = 120.dp,
+                accentColor = accent,
+                outlineColor = outline
+            )
+        }
+        EmptyIllustrationKind.TRASH -> {
+            com.example.notes.ui.components.AnimatedEmptyTrash(
+                size = 120.dp,
+                outlineColor = outline
+            )
+        }
+        EmptyIllustrationKind.FAVORITE -> {
+            Canvas(modifier = Modifier.size(120.dp)) {
+                drawFavoriteIllustration(accent, outline)
+            }
         }
     }
 }
@@ -1943,11 +1966,15 @@ private fun NoteCardContainer(
         blocksToPlainText(blocks)
     }
 
+    val cardInteractionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
     Card(
         modifier = Modifier
             .fillMaxWidth()
+            .bounceScale(cardInteractionSource, scaleDown = 0.97f)
             .clip(RoundedCornerShape(12.dp))
             .combinedClickable(
+                interactionSource = cardInteractionSource,
+                indication = androidx.compose.material3.ripple(),
                 onClick = onClick,
                 onLongClick = onLongClick
             ),

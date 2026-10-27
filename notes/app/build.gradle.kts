@@ -57,7 +57,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.notes"
+        applicationId = "com.raximjonov.smartnotes"
         minSdk = 24
         targetSdk = 37
         versionCode = 1
@@ -185,6 +185,9 @@ dependencies {
     implementation(libs.androidx.credentials)
     implementation(libs.androidx.credentials.play.services)
     implementation(libs.googleid.lib)
+
+    // Lottie Compose for modern animated illustrations and icons
+    implementation(libs.lottie.compose)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

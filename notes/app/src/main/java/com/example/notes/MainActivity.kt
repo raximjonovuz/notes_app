@@ -395,17 +395,30 @@ private fun AppNavHost(
         }
     ) {
         composable(Routes.SPLASH) {
-            SplashScreen(
-                onTimeout = {
-                    val hasActiveSession =
-                        com.example.notes.data.local.AuthStore.getActive(application) != null
-                    val destination =
-                        if (hasActiveSession) Routes.NOTES_LIST else Routes.LOGIN
-                    navController.navigate(destination) {
-                        popUpTo(Routes.SPLASH) { inclusive = true }
+            val hasActiveSession =
+                com.example.notes.data.local.AuthStore.getActive(application) != null
+            if (hasActiveSession) {
+                // If user is already logged in, show splash and proceed to notes list
+                SplashScreen(
+                    onTimeout = {
+                        navController.navigate(Routes.NOTES_LIST) {
+                            popUpTo(Routes.SPLASH) { inclusive = true }
+                        }
                     }
-                }
-            )
+                )
+            } else {
+                // Not logged in: Render the seamless animated flow (Splash morphs into Login seamlessly in one container!)
+                com.example.notes.ui.auth.AnimatedLoginFlow(
+                    onAuthenticated = {
+                        navController.navigate(Routes.NOTES_LIST) {
+                            popUpTo(Routes.SPLASH) { inclusive = true }
+                        }
+                    },
+                    onBack = { },
+                    isEntryPoint = true,
+                    startAsSplash = true
+                )
+            }
         }
 
         composable(Routes.NOTES_LIST) {
@@ -474,7 +487,66 @@ private fun AppNavHost(
             route = Routes.NOTE_EDIT,
             arguments = listOf(
                 navArgument("noteId") { type = NavType.LongType }
-            )
+            ),
+            enterTransition = {
+                // Google Keep style: Elegant container expand from center-scale with cubic-bezier
+                androidx.compose.animation.fadeIn(
+                    animationSpec = androidx.compose.animation.core.tween(
+                        durationMillis = 280,
+                        easing = androidx.compose.animation.core.FastOutSlowInEasing
+                    )
+                ) + androidx.compose.animation.scaleIn(
+                    initialScale = 0.88f,
+                    animationSpec = androidx.compose.animation.core.spring(
+                        dampingRatio = androidx.compose.animation.core.Spring.DampingRatioLowBouncy,
+                        stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow
+                    )
+                )
+            },
+            exitTransition = {
+                // Graceful shrink back into the list
+                androidx.compose.animation.fadeOut(
+                    animationSpec = androidx.compose.animation.core.tween(
+                        durationMillis = 220,
+                        easing = androidx.compose.animation.core.FastOutLinearInEasing
+                    )
+                ) + androidx.compose.animation.scaleOut(
+                    targetScale = 0.90f,
+                    animationSpec = androidx.compose.animation.core.tween(
+                        durationMillis = 220,
+                        easing = androidx.compose.animation.core.FastOutLinearInEasing
+                    )
+                )
+            },
+            popEnterTransition = {
+                androidx.compose.animation.fadeIn(
+                    animationSpec = androidx.compose.animation.core.tween(
+                        durationMillis = 240,
+                        easing = androidx.compose.animation.core.LinearOutSlowInEasing
+                    )
+                ) + androidx.compose.animation.scaleIn(
+                    initialScale = 0.92f,
+                    animationSpec = androidx.compose.animation.core.spring(
+                        dampingRatio = androidx.compose.animation.core.Spring.DampingRatioNoBouncy,
+                        stiffness = androidx.compose.animation.core.Spring.StiffnessMedium
+                    )
+                )
+            },
+            popExitTransition = {
+                // On back: smoothly collapse back down into the card location
+                androidx.compose.animation.fadeOut(
+                    animationSpec = androidx.compose.animation.core.tween(
+                        durationMillis = 220,
+                        easing = androidx.compose.animation.core.FastOutLinearInEasing
+                    )
+                ) + androidx.compose.animation.scaleOut(
+                    targetScale = 0.88f,
+                    animationSpec = androidx.compose.animation.core.spring(
+                        dampingRatio = androidx.compose.animation.core.Spring.DampingRatioNoBouncy,
+                        stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow
+                    )
+                )
+            }
         ) { backStackEntry ->
             val noteEditViewModel: NoteEditViewModel = viewModel(
                 factory = NoteEditViewModel.Factory(
