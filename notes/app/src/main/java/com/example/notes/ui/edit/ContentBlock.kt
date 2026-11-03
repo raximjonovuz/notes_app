@@ -598,10 +598,10 @@ object StyleRangeSerializer {
 
     /**
      * Encode a list of [StyleRange] into a compact payload. Anchors
-     * (start == end) are encoded as `start-:b|i|u|cN`. The payload is
+     * (start == end) are encoded as `start-:b|i|u|s|cN`. The payload is
      * sorted by `start` for stable on-disk form.
      *
-     * Output format: `s-e:b|i|u|cN;s-e:b|i|u|cN;...`
+     * Output format: `s-e:b|i|u|s|cN;s-e:b|i|u|s|cN;...`
      */
     fun encode(ranges: List<StyleRange>): String {
         if (ranges.isEmpty()) return ""
@@ -617,6 +617,8 @@ object StyleRangeSerializer {
             sb.append(FLAG_SEP)
             sb.append(if (r.underline) 'u' else '-')
             sb.append(FLAG_SEP)
+            sb.append(if (r.strikethrough) 's' else '-')
+            sb.append(FLAG_SEP)
             sb.append('c').append(r.colorIndex.coerceIn(0, 5))
         }
         return sb.toString()
@@ -625,28 +627,34 @@ object StyleRangeSerializer {
     /**
      * Decode the payload produced by [encode]. Returns an empty list for
      * empty / malformed input. Malformed ranges are skipped.
+     * Supports both legacy 4-flag (`b|i|u|cN`) and current 5-flag (`b|i|u|s|cN`) formats.
      */
     fun decode(payload: String): List<StyleRange> {
         if (payload.isBlank()) return emptyList()
         val out = mutableListOf<StyleRange>()
         for (segment in payload.split(RANGE_SEP)) {
-            if (segment.isBlank()) continue
-            // segment: s-e:b|i|u|cN
-            val parts = segment.split(':')
-            if (parts.size != 5) continue
-            val rangeParts = parts[0].split(FIELD_SEP)
-            if (rangeParts.size != 2) continue
-            val start = rangeParts[0].toIntOrNull() ?: continue
-            val end = rangeParts[1].toIntOrNull() ?: continue
+            val trimmed = segment.trim()
+            if (trimmed.isEmpty()) continue
+            val pair = trimmed.split(':', limit = 2)
+            if (pair.size != 2) continue
+            val bounds = pair[0].split(FIELD_SEP)
+            val flags = pair[1].split(FLAG_SEP)
+            if (bounds.size != 2 || flags.size !in 4..5) continue
+            val start = bounds[0].toIntOrNull() ?: continue
+            val end = bounds[1].toIntOrNull() ?: continue
             if (start < 0 || end < start) continue
-            val b = parts[1].length == 1 && parts[1][0] == 'b'
-            val it = parts[2].length == 1 && parts[2][0] == 'i'
-            val u = parts[3].length == 1 && parts[3][0] == 'u'
-            val c = if (parts[4].length >= 2 && parts[4][0] == 'c') {
-                parts[4].substring(1).toIntOrNull()?.coerceIn(0, 5) ?: 0
+
+            val b = flags[0] == "b"
+            val it = flags[1] == "i"
+            val u = flags[2] == "u"
+            val strike = if (flags.size == 5) flags[3] == "s" else false
+            val colorFlag = flags.last()
+            val color = if (colorFlag.startsWith("c")) {
+                colorFlag.removePrefix("c").toIntOrNull()?.coerceIn(0, 5) ?: 0
             } else 0
-            if (start == end && !b && !it && !u && c == 0) continue // skip empty anchors
-            out += StyleRange(start, end, b, it, u, false, c)
+
+            if (start == end && !b && !it && !u && !strike && color == 0) continue // skip empty anchors
+            out += StyleRange(start, end, b, it, u, strike, color)
         }
         return out
     }
