@@ -652,7 +652,7 @@ fun NoteEditScreen(
             BasicTextField(
                 value = TextFieldValue(
                     text = state.title,
-                    selection = TextRange(state.title.length)
+                    selection = state.titleSelection
                 ),
                 onValueChange = viewModel::onTitleChange,
                 singleLine = false,

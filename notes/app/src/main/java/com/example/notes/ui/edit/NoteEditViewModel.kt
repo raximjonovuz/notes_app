@@ -77,6 +77,7 @@ private fun extractUrisFromContent(raw: String): List<String> {
 data class NoteEditState(
     val id: Long = 0L,
     val title: String = "",
+    val titleSelection: androidx.compose.ui.text.TextRange = androidx.compose.ui.text.TextRange.Zero,
     val blocks: List<ContentBlock> = emptyList(),
     val activeBlockId: String? = null,
     val isSaved: Boolean = false,
@@ -428,8 +429,14 @@ class NoteEditViewModel(
      */
     fun onTitleChange(newValue: TextFieldValue) {
         val title = newValue.text
-        if (_state.value.title != title) pushUndoSnapshot()
-        _state.value = _state.value.copy(title = title)
+        // Only snapshot when visible text changes and IME is not actively composing (D-02)
+        if (_state.value.title != title && newValue.composition == null) {
+            pushUndoSnapshot()
+        }
+        _state.value = _state.value.copy(
+            title = title,
+            titleSelection = newValue.selection
+        )
         scheduleAutosaveIfReady(composing = newValue.composition != null)
     }
 
