@@ -81,15 +81,12 @@
 
 ---
 
-## 8-Bosqich: Tozalash va Yakuniy Tekshiruv
-- **Status:** Jarayonda (Yangi editor to'liq UI'ga ulanib telefonda tasdiqlangach yakunlanadi)
-- **Reja:**
-  - `wire-new-editor` branchida har bir ulanishni alohida commit qilish va telefonda sinash.
-
-
-
-
-
-
-
-
+## 8-Bosqich: Tozalash, Versiya oshirish va Google Play Console Relizi
+- **Status:** Bajarildi
+- **Bajarilgan ishlar:**
+  - Checklist Enter debouncing va ro'yxat kartochkalaridagi bo'sh prefikslar xatosi tuzatildi (5a4de54).
+  - Versiya 1.0.6 (versionCode 7) ga ko'tarildi (d902f96).
+  - wire-new-editor branchidagi barcha tuzatishlar master branchiga to'liq va xatosiz merge qilindi.
+  - Google Play Console uchun imzolangan Notes-v1.0.6-release.aab va mustaqil o'rnatish uchun Notes-v1.0.6-release.apk muvaffaqiyatli yig'ildi (bundleRelease va assembleRelease).
+  - Reliz fayllari Desktop (C:\Users\user\Desktop) va dist/ jildiga joylashtirildi.
+  - Desktopdagi eski, vaqtincha va keraksiz kesh fayllar tozalandi.
