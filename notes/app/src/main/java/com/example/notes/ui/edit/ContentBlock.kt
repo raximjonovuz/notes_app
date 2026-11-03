@@ -205,10 +205,15 @@ internal const val TEXT_BLOCK_HEADER_SUFFIX = ">"
  */
 fun parseBlocksFromContent(raw: String): List<ContentBlock> {
     if (raw.isEmpty()) return emptyList()
-    // B9 — JSON v2 envelope detection. Trimming the leading whitespace
-    // is intentional: a future migration that prepends a BOM or
-    // accidentally injects a leading \n shouldn't break the detection.
     val trimmed = raw.trimStart()
+    // 1. Try V3 JSON document envelope
+    if (trimmed.startsWith("{\"v\":3") || trimmed.startsWith("{\"v\": 3")) {
+        val v3Doc = parseV3(trimmed)
+        if (v3Doc != null) {
+            return RichDocumentAdapter.toLegacy(v3Doc)
+        }
+    }
+    // 2. Try V2 JSON envelope
     if (trimmed.startsWith("{\"v\":2") || trimmed.startsWith("{\"v\": 2")) {
         return parseBlocksFromJsonV2(trimmed)
     }
@@ -367,7 +372,9 @@ private fun serializeTextBlock(block: ContentBlock.TextBlock): String {
  */
 fun serializeBlocksToContent(blocks: List<ContentBlock>): String {
     if (blocks.isEmpty()) return ""
-    return serializeBlocksToJsonV2(blocks)
+    // Emit V3 JSON document envelope
+    val doc = RichDocumentAdapter.fromLegacy(blocks)
+    return serializeV3(doc)
 }
 
 /* -----------------------------------------------------------------------

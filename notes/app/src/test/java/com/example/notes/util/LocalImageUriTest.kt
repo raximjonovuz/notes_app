@@ -126,7 +126,7 @@ class LocalImageUriTest {
     fun `sanitizeForWire keeps the JSON v2 structure intact`() {
         val localUri = "file://${context.filesDir.absolutePath}/images/img_a.png"
         val wire = LocalImageUri.sanitizeForWire(contentWith(localUri), context)
-        // The result must still be a valid v2 envelope with the same
+        // The result must still be a valid envelope with the same
         // number of blocks.
         val blocks = parseBlocksFromContent(wire)
         assertEquals(
@@ -139,9 +139,10 @@ class LocalImageUriTest {
             "the image block must now carry the marker",
             LocalImageUri.isMarker(imgs[0].uri)
         )
+        val trimmed = wire.trimStart()
         assertEquals(
-            "the wire content must still be a v2 envelope",
-            true, wire.trimStart().startsWith("{\"v\":2")
+            "the wire content must be a valid JSON envelope (v2 or v3)",
+            true, trimmed.startsWith("{\"v\":2") || trimmed.startsWith("{\"v\":3")
         )
     }
 
