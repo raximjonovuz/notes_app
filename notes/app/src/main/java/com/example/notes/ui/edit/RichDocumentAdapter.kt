@@ -60,11 +60,17 @@ object RichDocumentAdapter {
                         val isLast = lineIdx == lines.lastIndex
 
                         val isLineChecklist = b.isChecklist
-                        val lineSize = b.fontSizesByLine[lineIdx] ?: b.fontSize
-
-                        var kind = when (lineSize) {
-                            2 -> ParagraphKind.H1
-                            3 -> ParagraphKind.H2
+                        var kind = when {
+                            b.fontSizesByLine.containsKey(lineIdx) -> when (b.fontSizesByLine[lineIdx]) {
+                                2 -> ParagraphKind.H1
+                                3 -> ParagraphKind.H2
+                                else -> if (isLineChecklist) ParagraphKind.CHECKLIST else ParagraphKind.BODY
+                            }
+                            lineIdx == 0 -> when (b.fontSize) {
+                                2 -> ParagraphKind.H1
+                                3 -> ParagraphKind.H2
+                                else -> if (isLineChecklist) ParagraphKind.CHECKLIST else ParagraphKind.BODY
+                            }
                             else -> if (isLineChecklist) ParagraphKind.CHECKLIST else ParagraphKind.BODY
                         }
 
