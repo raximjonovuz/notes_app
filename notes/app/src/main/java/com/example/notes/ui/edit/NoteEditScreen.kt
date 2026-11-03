@@ -1074,7 +1074,23 @@ private fun BlocksEditor(
         blocks.forEachIndexed { idx, block ->
             when (block) {
                 is ContentBlock.TextBlock -> {
-                    if (block.isChecklist) {
+                    if (USE_RICH_TEXT_BLOCK_EDITOR && !block.isChecklist && block.listType == 0) {
+                        val v3Doc = remember(block.text, block.styleRanges, block.fontSizesByLine, block.fontSize) {
+                            RichDocumentAdapter.fromLegacy(listOf(block))
+                        }
+                        val v3Text = v3Doc.blocks.firstOrNull() as? V3Block.Text
+                        val paragraphs = v3Text?.paragraphs ?: EditorResolver.computeParagraphRuns(block.text)
+                        val spans = v3Text?.spans ?: emptyList()
+
+                        RichTextBlockEditor(
+                            value = block.value,
+                            paragraphs = paragraphs,
+                            spans = spans,
+                            onValueChange = { v -> onBlockValueChange(block.id, v) },
+                            onBlockFocused = { onBlockFocused(block.id) },
+                            focusRequester = if (autoFocusFirstBlock && idx == 0) autoFocusRequester else null
+                        )
+                    } else if (block.isChecklist) {
                         ChecklistBlockEditor(
                             block = block,
                             activeBlockId = activeBlockId,

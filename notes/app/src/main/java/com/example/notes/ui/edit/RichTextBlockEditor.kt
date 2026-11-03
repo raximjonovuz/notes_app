@@ -1,33 +1,48 @@
 package com.example.notes.ui.edit
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.OffsetMapping
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.TransformedText
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.notes.BuildConfig
 
 /**
  * Feature flag for the unified single-field RichTextBlockEditor.
  * When enabled, uses bitta-field BasicTextField with paragraph runs and char spans.
+ * Defaults to true in debug builds, false in release builds.
  */
-var USE_RICH_TEXT_BLOCK_EDITOR = false
+var USE_RICH_TEXT_BLOCK_EDITOR = BuildConfig.DEBUG
 
 /**
  * Builds VisualTransformation efficiently in a single sweep for v3 text block.
@@ -105,6 +120,7 @@ fun RichTextBlockEditor(
     spans: List<CharSpan>,
     onValueChange: (TextFieldValue) -> Unit,
     modifier: Modifier = Modifier,
+    onBlockFocused: () -> Unit = {},
     focusRequester: FocusRequester? = null
 ) {
     val textColor = MaterialTheme.colorScheme.onSurface
@@ -112,13 +128,61 @@ fun RichTextBlockEditor(
         v3VisualTransformation(value.text, paragraphs, spans, textColor)
     }
 
+    var localValue by remember(value.text) { mutableStateOf(value) }
+
+    LaunchedEffect(value) {
+        if (value.text != localValue.text || value.selection != localValue.selection) {
+            localValue = value
+        }
+    }
+
     BasicTextField(
-        value = value,
-        onValueChange = onValueChange,
-        modifier = if (focusRequester != null) modifier.focusRequester(focusRequester) else modifier,
+        value = localValue,
+        onValueChange = { newValue ->
+            val oldSel = localValue.selection
+            val newSel = newValue.selection
+            val selectionOnly = newValue.text == localValue.text && newSel != oldSel
+            localValue = newValue
+            onValueChange(newValue)
+            if (selectionOnly) {
+                onBlockFocused()
+            }
+        },
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp)
+            .onFocusChanged { state ->
+                if (state.isFocused) onBlockFocused()
+            }
+            .then(
+                if (focusRequester != null) Modifier.focusRequester(focusRequester)
+                else Modifier
+            ),
         visualTransformation = visualTransformation,
         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-        textStyle = MaterialTheme.typography.bodyLarge.copy(color = textColor),
-        keyboardOptions = KeyboardOptions.Default
+        textStyle = MaterialTheme.typography.bodyLarge.copy(
+            color = textColor,
+            textAlign = TextAlign.Start
+        ),
+        keyboardOptions = KeyboardOptions(
+            keyboardType = KeyboardType.Text,
+            imeAction = ImeAction.Default,
+            autoCorrectEnabled = false,
+            capitalization = KeyboardCapitalization.Sentences
+        ),
+        decorationBox = { inner ->
+            Box(modifier = Modifier.fillMaxWidth()) {
+                if (localValue.text.isEmpty()) {
+                    Text(
+                        text = "Type here...",
+                        style = MaterialTheme.typography.bodyLarge.copy(
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                            textAlign = TextAlign.Start
+                        )
+                    )
+                }
+                inner()
+            }
+        }
     )
 }
