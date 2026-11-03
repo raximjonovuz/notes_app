@@ -34,6 +34,80 @@ object RichDocumentAdapter {
         else -> 0
     }
 
+    private data class LegacyLineMap(
+        val legacyStart: Int,
+        val legacyEnd: Int,
+        val strippedPrefixLen: Int,
+        val cleanStart: Int,
+        val cleanEnd: Int
+    )
+
+    private data class CleanLineMap(
+        val cleanStart: Int,
+        val cleanEnd: Int,
+        val addedPrefixLen: Int,
+        val legacyStart: Int,
+        val legacyEnd: Int
+    )
+
+    private fun stripChecklistPrefixes(line: String): Triple<String, Boolean, Int> {
+        var curr = line
+        var checked = false
+        var stripped = 0
+        while (true) {
+            when {
+                curr.startsWith("- [x] ") || curr.startsWith("- [X] ") -> {
+                    checked = true
+                    curr = curr.substring(6)
+                    stripped += 6
+                }
+                curr.startsWith("- [ ] ") -> {
+                    curr = curr.substring(6)
+                    stripped += 6
+                }
+                curr == "- [x]" || curr == "- [X]" -> {
+                    checked = true
+                    curr = ""
+                    stripped += 5
+                    break
+                }
+                curr == "- [ ]" -> {
+                    curr = ""
+                    stripped += 5
+                    break
+                }
+                else -> break
+            }
+        }
+        return Triple(curr, checked, stripped)
+    }
+
+    private fun mapLegacyOffsetToClean(offset: Int, lineMaps: List<LegacyLineMap>, cleanTextLen: Int): Int {
+        if (lineMaps.isEmpty() || offset < 0) return 0
+        for (map in lineMaps) {
+            if (offset <= map.legacyEnd) {
+                val contentStart = map.legacyStart + map.strippedPrefixLen
+                return if (offset <= contentStart) {
+                    map.cleanStart
+                } else {
+                    map.cleanStart + (offset - contentStart)
+                }
+            }
+        }
+        return cleanTextLen
+    }
+
+    private fun mapCleanOffsetToLegacy(offset: Int, lineMaps: List<CleanLineMap>, legacyTextLen: Int): Int {
+        if (lineMaps.isEmpty() || offset < 0) return 0
+        for (map in lineMaps) {
+            if (offset <= map.cleanEnd) {
+                val delta = offset - map.cleanStart
+                return map.legacyStart + map.addedPrefixLen + delta
+            }
+        }
+        return legacyTextLen
+    }
+
     /**
      * Convert legacy List<ContentBlock> to RichDocumentV3.
      */
@@ -49,17 +123,25 @@ object RichDocumentAdapter {
                     val lines = rawText.split('\n')
                     val paragraphs = mutableListOf<ParagraphRun>()
                     val cleanTextBuilder = StringBuilder()
+                    val legacyLineMaps = mutableListOf<LegacyLineMap>()
 
-                    var originalOffset = 0
-                    var cleanOffset = 0
-                    // Track offset mapping for spans if prefix is stripped
-                    val offsetRemap = mutableListOf<Pair<Int, Int>>() // original to clean
+                    var currentLegacyStart = 0
+                    var currentCleanStart = 0
+
+                    val anyLineHasPrefix = lines.any { line ->
+                        stripChecklistPrefixes(line).third > 0
+                    }
 
                     for (lineIdx in lines.indices) {
                         val line = lines[lineIdx]
                         val isLast = lineIdx == lines.lastIndex
+                        val legacyLineEnd = currentLegacyStart + line.length
 
-                        val isLineChecklist = b.isChecklist
+                        val (cleanContent, hasCheckedPrefix, strippedPrefixLen) = stripChecklistPrefixes(line)
+                        val hasPrefix = strippedPrefixLen > 0
+
+                        val isLineChecklist = if (anyLineHasPrefix) hasPrefix else b.isChecklist
+
                         var kind = when {
                             b.fontSizesByLine.containsKey(lineIdx) -> when (b.fontSizesByLine[lineIdx]) {
                                 2 -> ParagraphKind.H1
@@ -74,27 +156,15 @@ object RichDocumentAdapter {
                             else -> if (isLineChecklist) ParagraphKind.CHECKLIST else ParagraphKind.BODY
                         }
 
-                        var checked = false
-                        var lineContent = line
-
-                        // If line has checklist markdown prefix "- [ ] " or "- [x] ", parse and strip
-                        if (kind == ParagraphKind.CHECKLIST || line.startsWith("- [ ] ") || line.startsWith("- [x] ")) {
+                        if (hasPrefix && kind == ParagraphKind.BODY) {
                             kind = ParagraphKind.CHECKLIST
-                            if (line.startsWith("- [x] ") || line.startsWith("- [X] ")) {
-                                checked = true
-                                lineContent = line.substring(6)
-                                originalOffset += 6
-                            } else if (line.startsWith("- [ ] ")) {
-                                checked = false
-                                lineContent = line.substring(6)
-                                originalOffset += 6
-                            }
                         }
 
-                        val pStart = cleanOffset
-                        cleanTextBuilder.append(lineContent)
-                        cleanOffset += lineContent.length
-                        val pEnd = cleanOffset
+                        val checked = if (kind == ParagraphKind.CHECKLIST) hasCheckedPrefix else false
+
+                        val pStart = currentCleanStart
+                        cleanTextBuilder.append(cleanContent)
+                        val pEnd = pStart + cleanContent.length
 
                         paragraphs += ParagraphRun(
                             start = pStart,
@@ -103,23 +173,30 @@ object RichDocumentAdapter {
                             checked = checked
                         )
 
+                        legacyLineMaps += LegacyLineMap(
+                            legacyStart = currentLegacyStart,
+                            legacyEnd = legacyLineEnd,
+                            strippedPrefixLen = strippedPrefixLen,
+                            cleanStart = pStart,
+                            cleanEnd = pEnd
+                        )
+
+                        currentLegacyStart = legacyLineEnd + 1
+                        currentCleanStart = pEnd
                         if (!isLast) {
                             cleanTextBuilder.append('\n')
-                            cleanOffset += 1
-                            originalOffset += (line.length - lineContent.length) + 1
+                            currentCleanStart += 1
                         }
                     }
 
-                    // Convert StyleRange to CharSpan
-                    // Note: If text wasn't shifted by prefixes, offsets match directly
                     val cleanText = cleanTextBuilder.toString()
                     val spans = b.styleRanges.mapNotNull { r ->
-                        val start = r.start.coerceIn(0, cleanText.length)
-                        val end = r.end.coerceIn(0, cleanText.length)
-                        if (start >= end) return@mapNotNull null
+                        val cleanStart = mapLegacyOffsetToClean(r.start, legacyLineMaps, cleanText.length)
+                        val cleanEnd = mapLegacyOffsetToClean(r.end, legacyLineMaps, cleanText.length)
+                        if (cleanStart >= cleanEnd) return@mapNotNull null
                         CharSpan(
-                            start = start,
-                            end = end,
+                            start = cleanStart,
+                            end = cleanEnd,
                             bold = r.bold,
                             italic = r.italic,
                             underline = r.underline,
@@ -155,27 +232,78 @@ object RichDocumentAdapter {
                     val fontSizesByLine = mutableMapOf<Int, Int>()
                     var hasChecklist = false
 
-                    // If paragraphs define checklist or headings, reconstruct lines and metadata
                     val rebuiltLines = mutableListOf<String>()
-                    var textChangedWithPrefixes = false
+                    val cleanLineMaps = mutableListOf<CleanLineMap>()
+
+                    var currentCleanStart = 0
+                    var currentLegacyStart = 0
+
+                    for (pIdx in lines.indices) {
+                        val line = lines[pIdx]
+                        val cleanLineEnd = currentCleanStart + line.length
+
+                        val p = b.paragraphs.getOrNull(pIdx)
+                        val isChecklist = p?.kind == ParagraphKind.CHECKLIST
+                        if (isChecklist) {
+                            hasChecklist = true
+                        }
+
+                        // Already has prefix? If so, don't duplicate.
+                        val alreadyHasPrefix = line.startsWith("- [ ] ") || line.startsWith("- [x] ") ||
+                                line.startsWith("- [X] ") || line == "- [ ]" || line == "- [x]" || line == "- [X]"
+
+                        val (rebuiltLine, addedPrefixLen) = if (isChecklist && !alreadyHasPrefix) {
+                            val prefix = if (p?.checked == true) "- [x] " else "- [ ] "
+                            (prefix + line) to prefix.length
+                        } else {
+                            line to 0
+                        }
+
+                        rebuiltLines += rebuiltLine
+                        val legacyLineEnd = currentLegacyStart + rebuiltLine.length
+
+                        cleanLineMaps += CleanLineMap(
+                            cleanStart = currentCleanStart,
+                            cleanEnd = cleanLineEnd,
+                            addedPrefixLen = addedPrefixLen,
+                            legacyStart = currentLegacyStart,
+                            legacyEnd = legacyLineEnd
+                        )
+
+                        currentCleanStart = cleanLineEnd + 1
+                        currentLegacyStart = legacyLineEnd + 1
+                    }
+
+                    val legacyText = rebuiltLines.joinToString("\n")
+
+                    val allH1 = b.paragraphs.isNotEmpty() && b.paragraphs.all { it.kind == ParagraphKind.H1 }
+                    val allH2 = b.paragraphs.isNotEmpty() && b.paragraphs.all { it.kind == ParagraphKind.H2 }
+                    val baseFontSize = when {
+                        allH1 -> 2
+                        allH2 -> 3
+                        else -> 1
+                    }
 
                     for (pIdx in b.paragraphs.indices) {
                         val p = b.paragraphs[pIdx]
-                        if (p.kind == ParagraphKind.H1) {
-                            fontSizesByLine[pIdx] = 2
-                        } else if (p.kind == ParagraphKind.H2) {
-                            fontSizesByLine[pIdx] = 3
+                        val lineSize = when (p?.kind) {
+                            ParagraphKind.H1 -> 2
+                            ParagraphKind.H2 -> 3
+                            else -> 1
                         }
-                        if (p.kind == ParagraphKind.CHECKLIST) {
-                            hasChecklist = true
+                        if (lineSize != baseFontSize) {
+                            fontSizesByLine[pIdx] = lineSize
                         }
                     }
 
-                    // Map CharSpan back to StyleRange
-                    val styleRanges = b.spans.map { s ->
+                    // Map CharSpan back to StyleRange, shifting offsets for added prefixes
+                    val styleRanges = b.spans.mapNotNull { s ->
+                        val legacyStart = mapCleanOffsetToLegacy(s.start, cleanLineMaps, legacyText.length)
+                        val legacyEnd = mapCleanOffsetToLegacy(s.end, cleanLineMaps, legacyText.length)
+                        if (legacyStart >= legacyEnd) return@mapNotNull null
                         StyleRange(
-                            start = s.start,
-                            end = s.end,
+                            start = legacyStart,
+                            end = legacyEnd,
                             bold = s.bold,
                             italic = s.italic,
                             underline = s.underline,
@@ -184,12 +312,8 @@ object RichDocumentAdapter {
                         )
                     }
 
-                    val baseFontSize = if (fontSizesByLine.values.any { it == 2 }) 2
-                    else if (fontSizesByLine.values.any { it == 3 }) 3
-                    else 1
-
                     out += ContentBlock.TextBlock(
-                        text = rawText,
+                        text = legacyText,
                         styleRanges = styleRanges,
                         fontSize = baseFontSize,
                         isChecklist = hasChecklist,
