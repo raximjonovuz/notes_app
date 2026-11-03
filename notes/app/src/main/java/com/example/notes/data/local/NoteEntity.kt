@@ -67,6 +67,7 @@ data class NoteEntity(
     val isFavorite: Boolean = false,
     val isTrashed: Boolean = false,
     val backgroundColor: Int = 0,
+    val backgroundColorKey: String = "default",
     val fontWeight: Int = 0,
     val textSize: Int = 0,
     val imageUris: String = "",

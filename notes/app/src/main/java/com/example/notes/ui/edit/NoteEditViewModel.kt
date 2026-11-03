@@ -1132,11 +1132,10 @@ class NoteEditViewModel(
     /* ---------- Background color ---------- */
 
     fun setBackgroundColorIndex(index: Int) {
-        val clamped = index.coerceIn(0, 7)
         val current = _state.value
-        if (current.backgroundColor == clamped) return
+        if (current.backgroundColor == index) return
         pushUndoSnapshot()
-        _state.value = current.copy(backgroundColor = clamped, isDirty = true)
+        _state.value = current.copy(backgroundColor = index, isDirty = true)
         saveNow()
     }
 

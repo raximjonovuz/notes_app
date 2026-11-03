@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [NoteEntity::class], version = 11, exportSchema = true)
+@Database(entities = [NoteEntity::class], version = 12, exportSchema = true)
 abstract class NoteDatabase : RoomDatabase() {
 
     abstract fun noteDao(): NoteDao
@@ -164,6 +164,28 @@ abstract class NoteDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * R-01/R-02 — Room v12 migration adding backgroundColorKey.
+         */
+        val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE notes ADD COLUMN backgroundColorKey TEXT NOT NULL DEFAULT 'default'")
+                db.execSQL(
+                    "UPDATE notes SET backgroundColorKey = CASE backgroundColor " +
+                        "WHEN 1 THEN 'yellow' " +
+                        "WHEN 2 THEN 'blue' " +
+                        "WHEN 3 THEN 'pink' " +
+                        "WHEN 4 THEN 'green' " +
+                        "WHEN 5 THEN 'orange' " +
+                        "WHEN 6 THEN 'purple' " +
+                        "WHEN 7 THEN 'red' " +
+                        "WHEN 8 THEN 'teal' " +
+                        "WHEN 9 THEN 'gray' " +
+                        "ELSE 'default' END"
+                )
+            }
+        }
+
         fun getDatabase(context: Context): NoteDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -181,7 +203,8 @@ abstract class NoteDatabase : RoomDatabase() {
                         MIGRATION_7_8,
                         MIGRATION_8_9,
                         MIGRATION_9_10,
-                        MIGRATION_10_11
+                        MIGRATION_10_11,
+                        MIGRATION_11_12
                     )
                     .build()
                 INSTANCE = instance
