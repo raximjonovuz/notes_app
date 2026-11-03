@@ -243,16 +243,48 @@ object StyleRanges {
         return onCount in 1 until total
     }
 
+    private fun StyleRange.slice(from: Int, to: Int): StyleRange = copy(start = from, end = to)
+
+    fun canonical(ranges: List<StyleRange>): List<StyleRange> {
+        val nonAnchors = ranges.filter { it.start < it.end }
+        val anchors = ranges.filter { it.start == it.end }
+        val points = nonAnchors.flatMap { listOf(it.start, it.end) }.distinct().sorted()
+        if (points.size < 2) return mergeRanges(nonAnchors) + anchors
+        val out = mutableListOf<StyleRange>()
+        for (i in 0 until points.lastIndex) {
+            val a = points[i]
+            val b = points[i + 1]
+            val covers = nonAnchors.filter { it.start <= a && it.end >= b }
+            if (covers.isEmpty()) continue
+            val lastColor = covers.lastOrNull { it.colorIndex != 0 }?.colorIndex ?: 0
+            val run = StyleRange(
+                start = a,
+                end = b,
+                bold = covers.any { it.bold },
+                italic = covers.any { it.italic },
+                underline = covers.any { it.underline },
+                strikethrough = covers.any { it.strikethrough },
+                colorIndex = lastColor
+            )
+            if (out.lastOrNull()?.let { it.end == run.start && it.copy(end = run.end) == run } == true) {
+                out[out.lastIndex] = out.last().copy(end = run.end)
+            } else {
+                out += run
+            }
+        }
+        return mergeRanges(out) + anchors
+    }
+
     /* ---------------- Selection-aware toggles ---------------- */
 
     /**
-     * Toggle [attribute] (BOLD / ITALIC / UNDERLINE) across the selection.
+     * Toggle [attribute] (BOLD / ITALIC / UNDERLINE / STRIKETHROUGH) across the selection.
      * If the selection is collapsed the list is returned unchanged; the
      * caller should use [anchorAtCursor] to set the pending style for the
      * next typed character instead.
      *
      * If every character in the selection already has [attribute] the
-     * attribute is removed; otherwise it is added to every position.
+     * attribute is removed; otherwise it is added to every position in the selection.
      */
     fun toggleAttribute(
         ranges: List<StyleRange>,
@@ -264,55 +296,45 @@ object StyleRanges {
         val e = selection.max
         if (s >= e) return ranges
 
-        val alreadyOn = isFullyStyled(ranges, selection, e, attribute)
-        // Per-position, what's the current value of `attribute`?
-        val perPosOn = (s until e).map { pos ->
-            val r = ranges.find { it.start <= pos && pos < it.end }
-            when (attribute) {
-                StyleAttribute.BOLD -> r?.bold == true
-                StyleAttribute.ITALIC -> r?.italic == true
-                StyleAttribute.UNDERLINE -> r?.underline == true
-                StyleAttribute.STRIKETHROUGH -> r?.strikethrough == true
-                StyleAttribute.COLOR -> false
+        val canonicalRanges = canonical(ranges)
+        val alreadyOn = isFullyStyled(canonicalRanges, selection, e, attribute)
+        val newOnFlag = !alreadyOn
+
+        // Collect all distinct boundary points including selection boundaries
+        val points = (canonicalRanges.flatMap { listOf(it.start, it.end) } + listOf(s, e))
+            .distinct()
+            .sorted()
+
+        val out = mutableListOf<StyleRange>()
+        for (i in 0 until points.lastIndex) {
+            val a = points[i]
+            val b = points[i + 1]
+            if (a >= b) continue
+
+            val covers = canonicalRanges.filter { it.start <= a && it.end >= b }
+            val inSelection = a >= s && b <= e
+
+            var bold = covers.any { it.bold }
+            var italic = covers.any { it.italic }
+            var underline = covers.any { it.underline }
+            var strike = covers.any { it.strikethrough }
+            val color = covers.lastOrNull { it.colorIndex != 0 }?.colorIndex ?: 0
+
+            if (inSelection) {
+                when (attribute) {
+                    StyleAttribute.BOLD -> bold = newOnFlag
+                    StyleAttribute.ITALIC -> italic = newOnFlag
+                    StyleAttribute.UNDERLINE -> underline = newOnFlag
+                    StyleAttribute.STRIKETHROUGH -> strike = newOnFlag
+                    StyleAttribute.COLOR -> Unit
+                }
+            }
+
+            if (bold || italic || underline || strike || color != 0) {
+                out += StyleRange(a, b, bold, italic, underline, strike, color)
             }
         }
-        // If all on, we turn all off. Otherwise, we turn all on.
-        val allOn = perPosOn.all { it }
-        val newOnFlag = !allOn
-
-        // Build replacement ranges: walk through the selection and emit a
-        // new StyleRange for each run of identical "other attributes" with
-        // the requested attribute flipped to `newOnFlag`.
-        val replacement = mutableListOf<StyleRange>()
-        var pos = s
-        while (pos < e) {
-            // Other-attribute snapshot at this position.
-            val cover = ranges.find { it.start <= pos && pos < it.end }
-            val bold = if (attribute == StyleAttribute.BOLD) newOnFlag else cover?.bold == true
-            val italic = if (attribute == StyleAttribute.ITALIC) newOnFlag else cover?.italic == true
-            val underline = if (attribute == StyleAttribute.UNDERLINE) newOnFlag else cover?.underline == true
-            val strike = if (attribute == StyleAttribute.STRIKETHROUGH) newOnFlag else cover?.strikethrough == true
-            val colorIndex = cover?.colorIndex ?: 0
-            // Extend the run while other attributes stay identical.
-            var next = pos + 1
-            while (next < e) {
-                val c2 = ranges.find { it.start <= next && next < it.end }
-                val b2 = if (attribute == StyleAttribute.BOLD) newOnFlag else c2?.bold == true
-                val i2 = if (attribute == StyleAttribute.ITALIC) newOnFlag else c2?.italic == true
-                val u2 = if (attribute == StyleAttribute.UNDERLINE) newOnFlag else c2?.underline == true
-                val s2 = if (attribute == StyleAttribute.STRIKETHROUGH) newOnFlag else c2?.strikethrough == true
-                val color2 = c2?.colorIndex ?: 0
-                if (b2 != bold || i2 != italic || u2 != underline || s2 != strike || color2 != colorIndex) break
-                next++
-            }
-            if (bold || italic || underline || strike || colorIndex != 0) {
-                replacement += StyleRange(pos, next, bold, italic, underline, strike, colorIndex)
-            }
-            pos = next
-        }
-
-        val outside = ranges.filterNot { it.end > s && it.start < e }
-        return mergeRanges(outside + replacement)
+        return mergeRanges(out)
     }
 
     /**
@@ -330,31 +352,31 @@ object StyleRanges {
         if (s >= e) return ranges
         val ci = colorIndex.coerceIn(0, 5)
 
-        val replacement = mutableListOf<StyleRange>()
-        var pos = s
-        while (pos < e) {
-            val cover = ranges.find { it.start <= pos && pos < it.end }
-            val bold = cover?.bold == true
-            val italic = cover?.italic == true
-            val underline = cover?.underline == true
-            val strike = cover?.strikethrough == true
-            var next = pos + 1
-            while (next < e) {
-                val c2 = ranges.find { it.start <= next && next < it.end }
-                val b2 = c2?.bold == true
-                val i2 = c2?.italic == true
-                val u2 = c2?.underline == true
-                val s2 = c2?.strikethrough == true
-                if (b2 != bold || i2 != italic || u2 != underline || s2 != strike) break
-                next++
+        val canonicalRanges = canonical(ranges)
+        val points = (canonicalRanges.flatMap { listOf(it.start, it.end) } + listOf(s, e))
+            .distinct()
+            .sorted()
+
+        val out = mutableListOf<StyleRange>()
+        for (i in 0 until points.lastIndex) {
+            val a = points[i]
+            val b = points[i + 1]
+            if (a >= b) continue
+
+            val covers = canonicalRanges.filter { it.start <= a && it.end >= b }
+            val inSelection = a >= s && b <= e
+
+            val bold = covers.any { it.bold }
+            val italic = covers.any { it.italic }
+            val underline = covers.any { it.underline }
+            val strike = covers.any { it.strikethrough }
+            val color = if (inSelection) ci else (covers.lastOrNull { it.colorIndex != 0 }?.colorIndex ?: 0)
+
+            if (bold || italic || underline || strike || color != 0) {
+                out += StyleRange(a, b, bold, italic, underline, strike, color)
             }
-            if (bold || italic || underline || strike || ci != 0) {
-                replacement += StyleRange(pos, next, bold, italic, underline, strike, ci)
-            }
-            pos = next
         }
-        val outside = ranges.filterNot { it.end > s && it.start < e }
-        return mergeRanges(outside + replacement)
+        return mergeRanges(out)
     }
 
     /* ----------------- Pending-style anchor for cursor ----------------- */
