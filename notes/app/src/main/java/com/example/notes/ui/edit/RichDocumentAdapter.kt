@@ -50,28 +50,40 @@ object RichDocumentAdapter {
         val legacyEnd: Int
     )
 
-    private fun stripChecklistPrefixes(line: String): Triple<String, Boolean, Int> {
+    data class ChecklistLineParseResult(
+        val hasCheckbox: Boolean,
+        val checked: Boolean,
+        val cleanText: String,
+        val strippedPrefixLen: Int
+    )
+
+    fun parseChecklistLine(line: String): ChecklistLineParseResult {
         var curr = line
         var checked = false
         var stripped = 0
+        var hasCheckbox = false
         while (true) {
             when {
                 curr.startsWith("- [x] ") || curr.startsWith("- [X] ") -> {
+                    hasCheckbox = true
                     checked = true
                     curr = curr.substring(6)
                     stripped += 6
                 }
                 curr.startsWith("- [ ] ") -> {
+                    hasCheckbox = true
                     curr = curr.substring(6)
                     stripped += 6
                 }
                 curr == "- [x]" || curr == "- [X]" -> {
+                    hasCheckbox = true
                     checked = true
                     curr = ""
                     stripped += 5
                     break
                 }
                 curr == "- [ ]" -> {
+                    hasCheckbox = true
                     curr = ""
                     stripped += 5
                     break
@@ -79,9 +91,18 @@ object RichDocumentAdapter {
                 else -> break
             }
         }
-        return Triple(curr, checked, stripped)
+        return ChecklistLineParseResult(
+            hasCheckbox = hasCheckbox,
+            checked = checked,
+            cleanText = curr,
+            strippedPrefixLen = stripped
+        )
     }
 
+    private fun stripChecklistPrefixes(line: String): Triple<String, Boolean, Int> {
+        val res = parseChecklistLine(line)
+        return Triple(res.cleanText, res.checked, res.strippedPrefixLen)
+    }
     private fun mapLegacyOffsetToClean(offset: Int, lineMaps: List<LegacyLineMap>, cleanTextLen: Int): Int {
         if (lineMaps.isEmpty() || offset < 0) return 0
         for (map in lineMaps) {

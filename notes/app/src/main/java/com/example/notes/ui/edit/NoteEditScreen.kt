@@ -342,7 +342,7 @@ fun NoteEditScreen(
         is ContentBlock.TextBlock -> {
             val lines = ab.text.split('\n')
             val line = lines.getOrNull(activeLineIdx) ?: ""
-            line.startsWith("- [ ] ") || line.startsWith("- [x] ") || line.startsWith("- [X] ")
+            RichDocumentAdapter.parseChecklistLine(line).hasCheckbox
         }
         else -> false
     }
@@ -1424,13 +1424,18 @@ private fun ChecklistBlockEditor(
     onBlockFocused: () -> Unit,
     focusRequester: FocusRequester?
 ) {
+    android.util.Log.d("CHECKLIST_FLOW", "ChecklistBlockEditor recompose: block.text='${block.text}'")
     var itemsState by remember(block.id) { mutableStateOf(parseItems(block.text)) }
     var pendingFocus by remember { mutableStateOf<PendingFocus?>(null) }
+    var lastSplitTime by remember { mutableStateOf(0L) }
 
     // Toolbar (toggleChecklist) or undo/redo changed block.text from outside -> re-parse.
     LaunchedEffect(block.text) {
-        if (serializeItems(itemsState) != block.text) {
+        val serialized = serializeItems(itemsState)
+        android.util.Log.d("CHECKLIST_FLOW", "LaunchedEffect: block.text='${block.text}' serialized='$serialized'")
+        if (serialized != block.text) {
             itemsState = parseItems(block.text, previous = itemsState)
+            android.util.Log.d("CHECKLIST_FLOW", "LaunchedEffect: re-parsed itemsState.size=${itemsState.size}")
         }
     }
 
@@ -1446,6 +1451,7 @@ private fun ChecklistBlockEditor(
     ) {
         itemsState = updated
         val text = serializeItems(updated)
+        android.util.Log.d("CHECKLIST_FLOW", "commitUpdate: updated.size=${updated.size} text='$text'")
         val sel = TextRange(selection.start.coerceIn(0, text.length), selection.end.coerceIn(0, text.length))
         onValueChange(
             TextFieldValue(
@@ -1489,6 +1495,7 @@ private fun ChecklistBlockEditor(
                     onFocusConsumed = { if (pendingFocus?.itemId == item.id) pendingFocus = null },
                     onCheckedChange = {
                         val working = itemsState.toMutableList()
+                        android.util.Log.d("CHECKLIST_FLOW", "onCheckedChange: lineIdx=$lineIdx oldDone=${working.getOrNull(lineIdx)?.done}")
                         if (lineIdx in working.indices) {
                             working[lineIdx] = working[lineIdx].copy(done = !working[lineIdx].done)
                             // "- [ ] " and "- [x] " have the same length -> caret offsets stay valid.
@@ -1497,6 +1504,7 @@ private fun ChecklistBlockEditor(
                     },
                     onTextChange = { newText, localSel, composing ->
                         val working = itemsState.toMutableList()
+                        android.util.Log.d("CHECKLIST_FLOW", "onTextChange: lineIdx=$lineIdx newText='$newText'")
                         if (lineIdx in working.indices) {
                             working[lineIdx] = working[lineIdx].copy(text = newText)
                             commitUpdate(working, rowSelection(working, lineIdx, localSel), composing)
@@ -1509,7 +1517,14 @@ private fun ChecklistBlockEditor(
                     },
                     // Enter / paste: split this row at the caret.
                     onSplitAndAddLine = { beforeNewline, afterNewline ->
+                        val now = System.currentTimeMillis()
+                        if (now - lastSplitTime < 300L) {
+                            android.util.Log.d("CHECKLIST_FLOW", "onSplitAndAddLine debounced: ignored duplicate within ${now - lastSplitTime}ms")
+                            return@ChecklistLineRow
+                        }
+                        lastSplitTime = now
                         val working = itemsState.toMutableList()
+                        android.util.Log.d("CHECKLIST_FLOW", "onSplitAndAddLine: lineIdx=$lineIdx before='$beforeNewline' after='$afterNewline'")
                         if (lineIdx in working.indices) {
                             val hasBox = working[lineIdx].hasCheckbox
                             working[lineIdx] = working[lineIdx].copy(text = beforeNewline)
@@ -1676,6 +1691,16 @@ private fun ChecklistLineRow(
                         localValue.selection.start == 0
                     ) {
                         onBackspaceAtStart()
+                    } else if (event.type == KeyEventType.KeyDown &&
+                        (event.key == Key.Enter || event.key == Key.NumPadEnter)
+                    ) {
+                        val caret = localValue.selection.start.coerceIn(0, localValue.text.length)
+                        val text = localValue.text
+                        val before = text.substring(0, caret)
+                        val after = text.substring(caret)
+                        localValue = TextFieldValue(text = before, selection = TextRange(before.length))
+                        onSplitAndAddLine(before, after)
+                        true
                     } else false
                 },
             decorationBox = { inner ->
@@ -1713,13 +1738,8 @@ private data class ChecklistItemState(
 private data class ChecklistLine(val hasCheckbox: Boolean, val done: Boolean, val text: String)
 
 private fun parseChecklistLine(line: String): ChecklistLine {
-    return when {
-        line.startsWith("- [x] ") || line.startsWith("- [X] ") ->
-            ChecklistLine(hasCheckbox = true, done = true, text = line.removePrefix("- [x] ").removePrefix("- [X] "))
-        line.startsWith("- [ ] ") ->
-            ChecklistLine(hasCheckbox = true, done = false, text = line.removePrefix("- [ ] "))
-        else -> ChecklistLine(hasCheckbox = false, done = false, text = line)
-    }
+    val res = RichDocumentAdapter.parseChecklistLine(line)
+    return ChecklistLine(hasCheckbox = res.hasCheckbox, done = res.checked, text = res.cleanText)
 }
 
 /* -----------------------------------------------------------------------

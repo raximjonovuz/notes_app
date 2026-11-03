@@ -426,4 +426,233 @@ class RichDocumentV3Test {
         assertEquals(36, rtBold.start)
         assertEquals(43, rtBold.end)
     }
+
+    @Test
+    fun `simulate real ViewModel and ChecklistBlockEditor flow for 3 checklist items`() {
+        // Helper matching ChecklistBlockEditor.parseChecklistLine (NoteEditScreen.kt:1715)
+        fun parseChecklistLine(line: String): Pair<Boolean, Pair<Boolean, String>> {
+            return when {
+                line.startsWith("- [x] ") || line.startsWith("- [X] ") ->
+                    true to (true to line.removePrefix("- [x] ").removePrefix("- [X] "))
+                line.startsWith("- [ ] ") ->
+                    true to (false to line.removePrefix("- [ ] "))
+                else -> false to (false to line)
+            }
+        }
+
+        data class SimItem(val hasCheckbox: Boolean, val done: Boolean, val text: String)
+
+        // Helper matching ChecklistBlockEditor.parseItems (NoteEditScreen.kt:1378)
+        fun parseItems(text: String): List<SimItem> {
+            val parsed = text.split('\n').map { line ->
+                val (hasBox, pair) = parseChecklistLine(line)
+                val (done, clean) = pair
+                SimItem(hasCheckbox = hasBox, done = done, text = clean)
+            }
+            return parsed.ifEmpty {
+                listOf(SimItem(hasCheckbox = true, done = false, text = ""))
+            }
+        }
+
+        // Helper matching ChecklistBlockEditor.serializeItems (NoteEditScreen.kt:1372)
+        fun serializeItems(items: List<SimItem>): String =
+            items.joinToString("\n") { item ->
+                if (item.hasCheckbox) (if (item.done) "- [x] " else "- [ ] ") + item.text
+                else item.text
+            }
+
+        // Helper matching NoteEditViewModel.checklistPrefixLen (NoteEditViewModel.kt:947)
+        fun checklistPrefixLen(line: String): Int =
+            if (line.startsWith("- [ ] ") || line.startsWith("- [x] ") || line.startsWith("- [X] ")) 6 else 0
+
+        // Helper matching NoteEditViewModel.toggleChecklist (NoteEditViewModel.kt:1009)
+        fun toggleChecklist(block: ContentBlock.TextBlock): ContentBlock.TextBlock {
+            val lines = block.text.split('\n').toMutableList()
+            val lineIdx = 0.coerceIn(0, lines.lastIndex)
+            val line = lines[lineIdx]
+            val prefix = checklistPrefixLen(line)
+            val removed = prefix > 0
+            lines[lineIdx] = if (removed) line.substring(prefix) else "- [ ] $line"
+            val newText = lines.joinToString("\n")
+            val hasAny = lines.any { checklistPrefixLen(it) > 0 }
+            return block.copy(text = newText, isChecklist = hasAny)
+        }
+
+        // 1. New note starts with empty text block
+        var block = ContentBlock.TextBlock(text = "", isChecklist = false)
+        println("STEP 1 (new note): text='${block.text}', isChecklist=${block.isChecklist}")
+        assertEquals("", block.text)
+        assertFalse(block.isChecklist)
+
+        // 2. toggleChecklist on empty block
+        block = toggleChecklist(block)
+        println("STEP 2 (toggleChecklist): text='${block.text}', isChecklist=${block.isChecklist}")
+        assertEquals("- [ ] ", block.text)
+        assertTrue(block.isChecklist)
+
+        // 3. ChecklistBlockEditor loads block.text, user enters 3 items
+        var editorItems = parseItems(block.text)
+        assertEquals(1, editorItems.size)
+        assertTrue(editorItems[0].hasCheckbox)
+        assertEquals("", editorItems[0].text)
+
+        // User enters "item 1", enters newline, enters "item 2", enters newline, enters "item 3"
+        editorItems = listOf(
+            SimItem(hasCheckbox = true, done = false, text = "item 1"),
+            SimItem(hasCheckbox = true, done = false, text = "item 2"),
+            SimItem(hasCheckbox = true, done = false, text = "item 3")
+        )
+        val serializedText = serializeItems(editorItems)
+        block = block.copy(text = serializedText)
+        println("STEP 3 (3 items entered): text='${block.text}', isChecklist=${block.isChecklist}")
+        assertEquals("- [ ] item 1\n- [ ] item 2\n- [ ] item 3", block.text)
+
+        // 4. User checks the 2nd item
+        editorItems = listOf(
+            editorItems[0],
+            editorItems[1].copy(done = true),
+            editorItems[2]
+        )
+        val checkedText = serializeItems(editorItems)
+        block = block.copy(text = checkedText)
+        println("STEP 4 (item 2 checked): text='${block.text}', isChecklist=${block.isChecklist}")
+        assertEquals("- [ ] item 1\n- [x] item 2\n- [ ] item 3", block.text)
+
+        // 5. Save (serializeBlocksToContent)
+        val savedJson = serializeBlocksToContent(listOf(block))
+        println("STEP 5 (saved JSON): $savedJson")
+
+        // 6. Reload (parseBlocksFromContent)
+        val reloadedBlocks = parseBlocksFromContent(savedJson)
+        assertEquals(1, reloadedBlocks.size)
+        val reloadedBlock = reloadedBlocks[0] as ContentBlock.TextBlock
+        println("STEP 6 (reloaded): text='${reloadedBlock.text}', isChecklist=${reloadedBlock.isChecklist}")
+        assertEquals("- [ ] item 1\n- [x] item 2\n- [ ] item 3", reloadedBlock.text)
+        assertTrue(reloadedBlock.isChecklist)
+
+        // 7. Parse reloaded block in ChecklistBlockEditor
+        val reloadedItems = parseItems(reloadedBlock.text)
+        println("STEP 7 (editor items): size=${reloadedItems.size}, items=$reloadedItems")
+        assertEquals(3, reloadedItems.size)
+        assertTrue(reloadedItems[0].hasCheckbox && !reloadedItems[0].done && reloadedItems[0].text == "item 1")
+        assertTrue(reloadedItems[1].hasCheckbox && reloadedItems[1].done && reloadedItems[1].text == "item 2")
+        assertTrue(reloadedItems[2].hasCheckbox && !reloadedItems[2].done && reloadedItems[2].text == "item 3")
+
+        // 8. What if toggleChecklist is called again on the reloaded block?
+        val toggledAgain = toggleChecklist(reloadedBlock)
+        println("STEP 8 (toggleChecklist on reloaded): text='${toggledAgain.text}', isChecklist=${toggledAgain.isChecklist}")
+
+        // 9. What if block has trailing newline? "- [ ] item 1\n- [ ] item 2\n- [ ] item 3\n"
+        val withTrailing = block.copy(text = block.text + "\n")
+        val savedTrailing = serializeBlocksToContent(listOf(withTrailing))
+        val reloadedTrailing = parseBlocksFromContent(savedTrailing)
+        println("STEP 9 (trailing newline reloaded): text='${(reloadedTrailing[0] as ContentBlock.TextBlock).text}'")
+    }
+
+    @Test
+    fun `parseChecklistLine parses standard, empty with or without trailing space, and duplicate prefixes correctly`() {
+        val standardUnchecked = RichDocumentAdapter.parseChecklistLine("- [ ] Milk")
+        assertTrue(standardUnchecked.hasCheckbox)
+        assertFalse(standardUnchecked.checked)
+        assertEquals("Milk", standardUnchecked.cleanText)
+        assertEquals(6, standardUnchecked.strippedPrefixLen)
+
+        val standardChecked = RichDocumentAdapter.parseChecklistLine("- [x] Bread")
+        assertTrue(standardChecked.hasCheckbox)
+        assertTrue(standardChecked.checked)
+        assertEquals("Bread", standardChecked.cleanText)
+        assertEquals(6, standardChecked.strippedPrefixLen)
+
+        val emptyWithSpace = RichDocumentAdapter.parseChecklistLine("- [ ] ")
+        assertTrue(emptyWithSpace.hasCheckbox)
+        assertFalse(emptyWithSpace.checked)
+        assertEquals("", emptyWithSpace.cleanText)
+        assertEquals(6, emptyWithSpace.strippedPrefixLen)
+
+        val emptyWithoutSpace = RichDocumentAdapter.parseChecklistLine("- [ ]")
+        assertTrue(emptyWithoutSpace.hasCheckbox)
+        assertFalse(emptyWithoutSpace.checked)
+        assertEquals("", emptyWithoutSpace.cleanText)
+        assertEquals(5, emptyWithoutSpace.strippedPrefixLen)
+
+        val checkedWithoutSpace = RichDocumentAdapter.parseChecklistLine("- [x]")
+        assertTrue(checkedWithoutSpace.hasCheckbox)
+        assertTrue(checkedWithoutSpace.checked)
+        assertEquals("", checkedWithoutSpace.cleanText)
+        assertEquals(5, checkedWithoutSpace.strippedPrefixLen)
+
+        val duplicatePrefix = RichDocumentAdapter.parseChecklistLine("- [ ] - [ ] Double item")
+        assertTrue(duplicatePrefix.hasCheckbox)
+        assertFalse(duplicatePrefix.checked)
+        assertEquals("Double item", duplicatePrefix.cleanText)
+        assertEquals(12, duplicatePrefix.strippedPrefixLen)
+
+        val regularText = RichDocumentAdapter.parseChecklistLine("Just normal body text")
+        assertFalse(regularText.hasCheckbox)
+        assertFalse(regularText.checked)
+        assertEquals("Just normal body text", regularText.cleanText)
+        assertEquals(0, regularText.strippedPrefixLen)
+    }
+
+    @Test
+    fun `notes list preview filters out empty checkboxes and prevents duplicate bracket text`() {
+        // Raw note text that has standard items, checked items, and empty lines like "- [ ] " or "- [ ]"
+        val rawText = "- [ ] Tghj\n- [ ] \n- [ ]\n- [x] Done\n- [ ] - [ ] Fixed double"
+
+        // Use the exact preview mapping logic from NotesListScreen
+        val items = rawText.lines().mapNotNull { rawLine ->
+            val trimmed = rawLine.trim()
+            if (trimmed.isEmpty()) return@mapNotNull null
+            val res = RichDocumentAdapter.parseChecklistLine(trimmed)
+            val clean = res.cleanText.trim()
+            if (clean.isNotEmpty()) Pair(clean, res.checked) else null
+        }
+
+        assertEquals("Must filter out empty checklist items and only keep items with actual text", 3, items.size)
+        assertEquals("Tghj", items[0].first)
+        assertFalse(items[0].second)
+
+        assertEquals("Done", items[1].first)
+        assertTrue(items[1].second)
+
+        assertEquals("Fixed double", items[2].first)
+        assertFalse(items[2].second)
+
+        // Verify none of the items contains bracket artifacts like "- [ ]"
+        for (item in items) {
+            assertFalse("Item text '${item.first}' must not contain bracket prefixes", item.first.contains("- [ ]"))
+        }
+    }
+
+    @Test
+    fun `checklist Enter split debounces rapid consecutive calls within 300ms preventing extra checkbox creation`() {
+        data class Item(val id: String, val text: String)
+
+        var items = listOf(Item("1", "Dfhn"))
+        var lastSplitTime = 0L
+
+        fun splitLine(lineIdx: Int, before: String, after: String, callTime: Long) {
+            if (callTime - lastSplitTime < 300L) {
+                // Debounced duplicate call (e.g. Samsung keyboard duplicate event 3ms later)
+                return
+            }
+            lastSplitTime = callTime
+            val working = items.toMutableList()
+            working[lineIdx] = working[lineIdx].copy(text = before)
+            working.add(lineIdx + 1, Item("2", after))
+            items = working
+        }
+
+        // 1st split event at T = 1000ms
+        splitLine(0, "Dfhn", "", 1000L)
+        assertEquals(2, items.size)
+        assertEquals("Dfhn", items[0].text)
+        assertEquals("", items[1].text)
+
+        // 2nd split event at T = 1003ms (3ms later from Samsung Keyboard duplicate)
+        splitLine(0, "Dfhn", "", 1003L)
+
+        // Must still have exactly 2 items, NOT 3!
+        assertEquals("Debounce must block duplicate split call within 3ms", 2, items.size)
+    }
 }

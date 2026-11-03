@@ -173,9 +173,9 @@ object MarkdownExporter {
         val lines = raw.split('\n')
         return when {
             block.isChecklist -> lines.withIndex().joinToString("\n") { (_, line) ->
-                val checkbox = if (line.startsWith("- [x] ") || line.startsWith("- [X] ")) "- [x] " else "- [ ] "
-                val text = line.removePrefix("- [x] ").removePrefix("- [X] ").removePrefix("- [ ] ")
-                "$checkbox$text"
+                val res = com.example.notes.ui.edit.RichDocumentAdapter.parseChecklistLine(line)
+                val checkbox = if (res.checked) "- [x] " else "- [ ] "
+                "$checkbox${res.cleanText}"
             }
             block.listType == 1 -> lines.withIndex().joinToString("\n") { (i, line) -> "- $line" }
             block.listType == 2 -> lines.withIndex().joinToString("\n") { (i, line) -> "${i + 1}. $line" }

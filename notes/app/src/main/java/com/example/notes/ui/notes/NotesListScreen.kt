@@ -2114,12 +2114,12 @@ private fun NoteCardContainer(
         val checkBlock = blocks.filterIsInstance<ContentBlock.TextBlock>().firstOrNull { it.isChecklist }
         if (checkBlock != null) {
             checkBlock.text.lines()
-                .map { it.trim() }
-                .filter { it.isNotBlank() }
-                .map { line ->
-                    val done = line.startsWith("- [x] ") || line.startsWith("- [X] ")
-                    val clean = line.removePrefix("- [x] ").removePrefix("- [X] ").removePrefix("- [ ] ")
-                    Pair(clean, done)
+                .mapNotNull { rawLine ->
+                    val trimmed = rawLine.trim()
+                    if (trimmed.isEmpty()) return@mapNotNull null
+                    val res = com.example.notes.ui.edit.RichDocumentAdapter.parseChecklistLine(trimmed)
+                    val clean = res.cleanText.trim()
+                    if (clean.isNotEmpty()) Pair(clean, res.checked) else null
                 }
         } else {
             emptyList()
