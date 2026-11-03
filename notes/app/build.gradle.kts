@@ -60,9 +60,9 @@ android {
         applicationId = "com.raximjonov.smartnotes"
         minSdk = 24
         targetSdk = 37
-        versionCode = 6
+        versionCode = 7
 
-        versionName = "1.0.5"
+        versionName = "1.0.6"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
