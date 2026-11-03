@@ -6,9 +6,11 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -16,6 +18,8 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -61,7 +65,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -100,8 +107,23 @@ fun AnimatedLoginFlow(
     )
     val state by viewModel.state.collectAsStateWithLifecycle()
 
+    val haptic = LocalHapticFeedback.current
+
     var isSplashPhase by remember { mutableStateOf(startAsSplash) }
     var contentVisible by remember { mutableStateOf(!startAsSplash) }
+
+    // Shake animation on error
+    val shakeOffset = remember { Animatable(0f) }
+    LaunchedEffect(state.errorMessage) {
+        if (state.errorMessage != null) {
+            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            for (i in 0..2) {
+                shakeOffset.animateTo(10f, tween(40))
+                shakeOffset.animateTo(-10f, tween(40))
+            }
+            shakeOffset.animateTo(0f, spring(stiffness = Spring.StiffnessMedium))
+        }
+    }
 
     LaunchedEffect(Unit) {
         if (startAsSplash) {
@@ -198,22 +220,19 @@ fun AnimatedLoginFlow(
         val targetHeaderHeight = if (isSplashPhase) screenHeight else 270.dp
         val animatedHeaderHeight by animateDpAsState(
             targetValue = targetHeaderHeight,
-            animationSpec = spring(
-                dampingRatio = Spring.DampingRatioLowBouncy,
-                stiffness = Spring.StiffnessLow
-            ),
+            animationSpec = tween(durationMillis = 520, easing = FastOutSlowInEasing),
             label = "headerHeight"
         )
 
         val animatedCornerRadius by animateDpAsState(
             targetValue = if (isSplashPhase) 0.dp else 40.dp,
-            animationSpec = spring(stiffness = Spring.StiffnessLow),
+            animationSpec = tween(durationMillis = 520, easing = FastOutSlowInEasing),
             label = "cornerRadius"
         )
 
         val vectorSize by animateDpAsState(
             targetValue = if (isSplashPhase) 140.dp else 95.dp,
-            animationSpec = spring(dampingRatio = Spring.DampingRatioLowBouncy, stiffness = Spring.StiffnessLow),
+            animationSpec = tween(durationMillis = 520, easing = FastOutSlowInEasing),
             label = "vectorSize"
         )
 
@@ -317,14 +336,28 @@ fun AnimatedLoginFlow(
                         tintColor = Sage400,
                         accentColor = Mist100,
                         primaryColor = Forest700,
+                        isPreCompleted = true,
                         modifier = Modifier.padding(start = 12.dp)
                     )
                 }
             }
         }
 
-        // 2. STAGGERED FORM CONTENT
+        // 2. STAGGERED FORM CONTENT (Exact 5-frame = 83ms timing per Motion Spec)
         if (!isSplashPhase) {
+            val googleInteractionSource = remember { MutableInteractionSource() }
+            val isGooglePressed by googleInteractionSource.collectIsPressedAsState()
+            val googleButtonScale by animateFloatAsState(
+                targetValue = if (isGooglePressed) 0.96f else 1.0f,
+                animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+                label = "googleButtonScale"
+            )
+            LaunchedEffect(isGooglePressed) {
+                if (isGooglePressed) {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                }
+            }
+
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -334,12 +367,12 @@ fun AnimatedLoginFlow(
                     .padding(horizontal = 28.dp, vertical = 24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // Stagger 1: Welcome title
+                // Stagger 1 (t = 0ms): Welcome title
                 AnimatedVisibility(
                     visible = contentVisible,
-                    enter = fadeIn(tween(400, delayMillis = 40, easing = FastOutSlowInEasing)) +
+                    enter = fadeIn(tween(380, delayMillis = 0, easing = FastOutSlowInEasing)) +
                             slideInVertically(
-                                initialOffsetY = { 80 },
+                                initialOffsetY = { 70 },
                                 animationSpec = spring(stiffness = Spring.StiffnessLow)
                             )
                 ) {
@@ -363,21 +396,27 @@ fun AnimatedLoginFlow(
 
                 Spacer(Modifier.height(32.dp))
 
-                // Stagger 2: Google Continue Button
+                // Stagger 2 (t = 83ms, 5 frames later): Google Continue Button with 0.96x press scale & error shake
                 AnimatedVisibility(
                     visible = contentVisible,
-                    enter = fadeIn(tween(400, delayMillis = 100, easing = FastOutSlowInEasing)) +
+                    enter = fadeIn(tween(380, delayMillis = 83, easing = FastOutSlowInEasing)) +
                             slideInVertically(
-                                initialOffsetY = { 90 },
+                                initialOffsetY = { 80 },
                                 animationSpec = spring(stiffness = Spring.StiffnessLow)
                             )
                 ) {
                     Surface(
                         onClick = { launchGoogleSignIn() },
+                        interactionSource = googleInteractionSource,
                         enabled = !state.isGoogleLoading && !inFlight,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(56.dp),
+                            .height(56.dp)
+                            .graphicsLayer {
+                                scaleX = googleButtonScale
+                                scaleY = googleButtonScale
+                                translationX = shakeOffset.value
+                            },
                         shape = RoundedCornerShape(28.dp),
                         color = Color.White,
                         shadowElevation = 3.dp,
@@ -426,11 +465,13 @@ fun AnimatedLoginFlow(
                     }
                 }
 
-                // Error message banner
+                // Error message banner (shakes with button)
                 if (state.errorMessage != null) {
                     Spacer(Modifier.height(16.dp))
                     Surface(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .graphicsLayer { translationX = shakeOffset.value },
                         shape = RoundedCornerShape(14.dp),
                         color = Color(0xFFFFDAD6),
                         contentColor = Color(0xFF410002)
@@ -445,12 +486,12 @@ fun AnimatedLoginFlow(
 
                 Spacer(Modifier.height(16.dp))
 
-                // Stagger 3: Guest / Skip Button
+                // Stagger 3 (t = 166ms, 10 frames later): Guest / Skip Button
                 AnimatedVisibility(
                     visible = contentVisible,
-                    enter = fadeIn(tween(400, delayMillis = 160, easing = FastOutSlowInEasing)) +
+                    enter = fadeIn(tween(380, delayMillis = 166, easing = FastOutSlowInEasing)) +
                             slideInVertically(
-                                initialOffsetY = { 100 },
+                                initialOffsetY = { 85 },
                                 animationSpec = spring(stiffness = Spring.StiffnessLow)
                             )
                 ) {
@@ -479,10 +520,10 @@ fun AnimatedLoginFlow(
 
                 Spacer(Modifier.height(36.dp))
 
-                // Stagger 4: Security & Privacy badge
+                // Stagger 4 (t = 250ms, 15 frames later): Security & Privacy badge
                 AnimatedVisibility(
                     visible = contentVisible,
-                    enter = fadeIn(tween(400, delayMillis = 220, easing = FastOutSlowInEasing))
+                    enter = fadeIn(tween(400, delayMillis = 250, easing = FastOutSlowInEasing))
                 ) {
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,

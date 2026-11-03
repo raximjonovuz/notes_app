@@ -1,6 +1,7 @@
 package com.example.notes.ui.notes
 
 import android.content.Context
+import androidx.activity.compose.BackHandler
 import com.example.notes.ui.theme.bounceScale
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.foundation.BorderStroke
@@ -67,6 +68,8 @@ import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.ViewAgenda
 import androidx.compose.material.icons.outlined.PushPin
+import androidx.compose.material.icons.outlined.CheckBoxOutlineBlank
+import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
@@ -101,6 +104,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.CornerRadius
@@ -120,6 +124,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.notes.data.local.NoteEntity
 import com.example.notes.ui.edit.blocksToPlainText
 import com.example.notes.ui.edit.parseBlocksFromContent
+import com.example.notes.ui.edit.ContentBlock
 import com.example.notes.ui.theme.noteCardColor
 import com.example.notes.ui.theme.noteCardOnColor
 import com.example.notes.ui.theme.notesHeaderBackground
@@ -180,7 +185,10 @@ object SearchHistoryManager {
 fun NotesListScreen(
     viewModel: NotesListViewModel,
     filter: NotesFilter,
+    isDrawerOpen: Boolean = false,
     onAddNote: () -> Unit,
+    onAddChecklistNote: () -> Unit = onAddNote,
+    onAddNoteWithImage: (String) -> Unit = { onAddNote() },
     onNoteClick: (Long) -> Unit,
     onMenuClick: () -> Unit,
     onLogout: () -> Unit = {}
@@ -193,6 +201,14 @@ fun NotesListScreen(
 
     val context = androidx.compose.ui.platform.LocalContext.current
     var showOfflineBanner by remember { mutableStateOf(false) }
+
+    val imagePickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.GetContent()
+    ) { uri: android.net.Uri? ->
+        if (uri != null) {
+            onAddNoteWithImage(uri.toString())
+        }
+    }
 
     LaunchedEffect(Unit) {
         viewModel.refreshActiveUser()
@@ -221,6 +237,47 @@ fun NotesListScreen(
     var longPressedNoteId by remember { mutableStateOf<Long?>(null) }
     var searchTimeFilter by remember { mutableStateOf(SearchTimeFilter.ALL) }
     var searchHistory by remember { mutableStateOf(SearchHistoryManager.getHistory(context)) }
+    var lastBackPressTime by remember { mutableStateOf(0L) }
+    var isFabMenuExpanded by remember { mutableStateOf(false) }
+
+    // Initial shimmer skeleton loader on entry
+    var isInitialLoading by remember { mutableStateOf(true) }
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(450)
+        isInitialLoading = false
+    }
+
+    // When FAB speed dial menu is expanded, back press closes it
+    BackHandler(enabled = isFabMenuExpanded) {
+        isFabMenuExpanded = false
+    }
+
+    // When selection mode is active, back press clears selection
+    BackHandler(enabled = !isFabMenuExpanded && isSelectionMode) {
+        isSelectionMode = false
+        selectedIds = emptySet()
+    }
+
+    // When search is active, back press closes search
+    BackHandler(enabled = !isSelectionMode && isSearchActive) {
+        isSearchActive = false
+        viewModel.onSearchQueryChange("")
+    }
+
+    // When on ALL notes list (root) and drawer is closed, require double back press within 2s to exit
+    BackHandler(enabled = !isDrawerOpen && !isSelectionMode && !isSearchActive && filter == NotesFilter.ALL) {
+        val currentTime = System.currentTimeMillis()
+        if (currentTime - lastBackPressTime < 2000L) {
+            (context as? android.app.Activity)?.finish()
+        } else {
+            lastBackPressTime = currentTime
+            android.widget.Toast.makeText(
+                context,
+                "Chiqish uchun yana bir marta bosing",
+                android.widget.Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
 
     fun onPerformSearch(q: String) {
         viewModel.onSearchQueryChange(q)
@@ -250,7 +307,8 @@ fun NotesListScreen(
         NotesFilter.TRASH -> "Trash"
     }
 
-    Scaffold(
+    Box(modifier = Modifier.fillMaxSize()) {
+        Scaffold(
         topBar = {
             if (isSelectionMode) {
                 TopAppBar(
@@ -434,28 +492,9 @@ fun NotesListScreen(
                     contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
                     modifier = Modifier.navigationBarsPadding()
                 )
-            } else if (!isSelectionMode && filter != NotesFilter.TRASH) {
-                val fabInteractionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
-                FloatingActionButton(
-                    onClick = onAddNote,
-                    interactionSource = fabInteractionSource,
-                    shape = RoundedCornerShape(18.dp),
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    modifier = Modifier
-                        .navigationBarsPadding()
-                        .bounceScale(fabInteractionSource, scaleDown = 0.90f)
-                        .size(60.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Add,
-                        contentDescription = "New note",
-                        modifier = Modifier.size(32.dp)
-                    )
-                }
             }
         },
-        floatingActionButtonPosition = if (filter == NotesFilter.TRASH) FabPosition.Center else FabPosition.End,
+        floatingActionButtonPosition = FabPosition.End,
         bottomBar = {
             if (isSelectionMode) {
                 Surface(
@@ -500,7 +539,7 @@ fun NotesListScreen(
                         )
                         SelectionActionButton(
                             icon = Icons.Filled.Delete,
-                            label = "Delete",
+                            label = if (filter == NotesFilter.TRASH) "Delete" else "Trash",
                             tint = MaterialTheme.colorScheme.error,
                             enabled = selectedIds.isNotEmpty(),
                             onClick = {
@@ -659,7 +698,9 @@ fun NotesListScreen(
                     .padding(innerPadding)
             ) {
                 Box(modifier = Modifier.fillMaxSize()) {
-                    if (notes.isEmpty()) {
+                    if (isInitialLoading) {
+                        NotesListSkeleton()
+                    } else if (notes.isEmpty()) {
                         EmptyStateFor(
                             filter = filter,
                             searchQuery = searchQuery,
@@ -757,7 +798,50 @@ fun NotesListScreen(
                 }
             }
         }
+    }
 
+        if (!isSelectionMode && filter != NotesFilter.TRASH) {
+            androidx.compose.animation.AnimatedVisibility(
+                visible = isFabMenuExpanded,
+                enter = androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(200)),
+                exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(150))
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.45f))
+                        .clickable(
+                            interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                            indication = null,
+                            onClick = { isFabMenuExpanded = false }
+                        )
+                )
+            }
+
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .navigationBarsPadding()
+                    .padding(end = 16.dp, bottom = 16.dp)
+            ) {
+                SpeedDialFab(
+                    isExpanded = isFabMenuExpanded,
+                    onToggleExpand = { isFabMenuExpanded = !isFabMenuExpanded },
+                    onDismiss = { isFabMenuExpanded = false },
+                    onAddNote = onAddNote,
+                    onAddChecklistNote = onAddChecklistNote,
+                    onAddDrawingNote = {
+                        android.widget.Toast.makeText(context, "Chizish funksiyasi tez orada qo'shiladi", android.widget.Toast.LENGTH_SHORT).show()
+                    },
+                    onAddVoiceNote = {
+                        android.widget.Toast.makeText(context, "Ovozli eslatma tez orada qo'shiladi", android.widget.Toast.LENGTH_SHORT).show()
+                    },
+                    onAddImageNote = {
+                        imagePickerLauncher.launch("image/*")
+                    }
+                )
+            }
+        }
     }
 
     longPressedNoteId?.let { id ->
@@ -1791,6 +1875,52 @@ private fun SearchRecentView(
  * ===================================================================== */
 
 @Composable
+private fun NoteChecklistPreview(
+    items: List<Pair<String, Boolean>>,
+    onColor: Color,
+    maxItems: Int = 4
+) {
+    Column(
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        items.take(maxItems).forEach { (text, isDone) ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(
+                    imageVector = if (isDone) Icons.Filled.CheckBox else Icons.Outlined.CheckBoxOutlineBlank,
+                    contentDescription = null,
+                    tint = if (isDone) onColor.copy(alpha = 0.40f) else onColor.copy(alpha = 0.65f),
+                    modifier = Modifier.size(13.dp)
+                )
+                Text(
+                    text = text,
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        fontSize = 12.sp,
+                        lineHeight = 15.sp,
+                        textDecoration = if (isDone) androidx.compose.ui.text.style.TextDecoration.LineThrough else androidx.compose.ui.text.style.TextDecoration.None
+                    ),
+                    color = if (isDone) onColor.copy(alpha = 0.40f) else onColor.copy(alpha = 0.85f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+        if (items.size > maxItems) {
+            Text(
+                text = "+ ${items.size - maxItems} items",
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                color = onColor.copy(alpha = 0.5f),
+                modifier = Modifier.padding(start = 18.dp, top = 2.dp)
+            )
+        }
+    }
+}
+
+@Composable
 private fun NoteCard(
     note: NoteEntity,
     isSelectionMode: Boolean,
@@ -1808,7 +1938,7 @@ private fun NoteCard(
         isSelected = isSelected,
         onClick = onClick,
         onLongClick = onLongClick
-    ) { onColor, firstImageUri, plainExcerpt ->
+    ) { onColor, firstImageUri, plainExcerpt, checklistItems ->
         Column(modifier = Modifier.padding(14.dp)) {
             NoteCardHeader(
                 title = note.title,
@@ -1827,7 +1957,13 @@ private fun NoteCard(
 
             Spacer(Modifier.height(8.dp))
 
-            if (firstImageUri != null) {
+            if (checklistItems.isNotEmpty()) {
+                NoteChecklistPreview(
+                    items = checklistItems,
+                    onColor = onColor,
+                    maxItems = 4
+                )
+            } else if (firstImageUri != null) {
                 Row(
                     verticalAlignment = Alignment.Top,
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -1890,7 +2026,7 @@ private fun NoteStaggeredCard(
         isSelected = isSelected,
         onClick = onClick,
         onLongClick = onLongClick
-    ) { onColor, firstImageUri, plainExcerpt ->
+    ) { onColor, firstImageUri, plainExcerpt, checklistItems ->
         Column(modifier = Modifier.padding(12.dp)) {
             NoteCardHeader(
                 title = note.title,
@@ -1919,13 +2055,21 @@ private fun NoteStaggeredCard(
 
             Spacer(Modifier.height(8.dp))
 
-            Text(
-                text = plainExcerpt.ifBlank { "No content" },
-                style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, lineHeight = 16.sp),
-                color = onColor.copy(alpha = 0.72f),
-                maxLines = 5,
-                overflow = TextOverflow.Ellipsis
-            )
+            if (checklistItems.isNotEmpty()) {
+                NoteChecklistPreview(
+                    items = checklistItems,
+                    onColor = onColor,
+                    maxItems = 6
+                )
+            } else {
+                Text(
+                    text = plainExcerpt.ifBlank { "No content" },
+                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, lineHeight = 16.sp),
+                    color = onColor.copy(alpha = 0.72f),
+                    maxLines = 5,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
 
             Spacer(Modifier.height(8.dp))
 
@@ -1950,7 +2094,7 @@ private fun NoteCardContainer(
     isSelected: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
-    content: @Composable (onColor: Color, firstImageUri: String?, plainExcerpt: String) -> Unit
+    content: @Composable (onColor: Color, firstImageUri: String?, plainExcerpt: String, checklistItems: List<Pair<String, Boolean>>) -> Unit
 ) {
     val cardColor = noteCardColor(note.backgroundColor)
     val onColor = noteCardOnColor(note.backgroundColor)
@@ -1964,6 +2108,22 @@ private fun NoteCardContainer(
     val plainExcerpt = remember(note.content) {
         val blocks = parseBlocksFromContent(note.content)
         blocksToPlainText(blocks)
+    }
+    val checklistItems = remember(note.content) {
+        val blocks = parseBlocksFromContent(note.content)
+        val checkBlock = blocks.filterIsInstance<ContentBlock.TextBlock>().firstOrNull { it.isChecklist }
+        if (checkBlock != null) {
+            checkBlock.text.lines()
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+                .map { line ->
+                    val done = line.startsWith("- [x] ") || line.startsWith("- [X] ")
+                    val clean = line.removePrefix("- [x] ").removePrefix("- [X] ").removePrefix("- [ ] ")
+                    Pair(clean, done)
+                }
+        } else {
+            emptyList()
+        }
     }
 
     val cardInteractionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
@@ -1991,7 +2151,7 @@ private fun NoteCardContainer(
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
-        content(onColor, firstImageUri, plainExcerpt)
+        content(onColor, firstImageUri, plainExcerpt, checklistItems)
     }
 }
 
@@ -2304,6 +2464,176 @@ private fun BottomSheetAction(
                 style = MaterialTheme.typography.bodyLarge,
                 fontWeight = FontWeight.Medium
             )
+        }
+    }
+}
+
+@Composable
+private fun SpeedDialFab(
+    isExpanded: Boolean,
+    onToggleExpand: () -> Unit,
+    onDismiss: () -> Unit,
+    onAddNote: () -> Unit,
+    onAddChecklistNote: () -> Unit,
+    onAddDrawingNote: () -> Unit,
+    onAddVoiceNote: () -> Unit,
+    onAddImageNote: () -> Unit
+) {
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+
+    val fabRotation by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (isExpanded) 360f else 0f,
+        animationSpec = androidx.compose.animation.core.spring(
+            dampingRatio = 0.75f,
+            stiffness = androidx.compose.animation.core.Spring.StiffnessLow
+        ),
+        label = "fab_rotation"
+    )
+
+    Column(
+        horizontalAlignment = Alignment.End,
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        androidx.compose.animation.AnimatedVisibility(
+            visible = isExpanded,
+            enter = androidx.compose.animation.slideInVertically(
+                initialOffsetY = { it },
+                animationSpec = androidx.compose.animation.core.spring(
+                    dampingRatio = 0.8f,
+                    stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow
+                )
+            ) + androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(200)),
+            exit = androidx.compose.animation.slideOutVertically(
+                targetOffsetY = { it },
+                animationSpec = androidx.compose.animation.core.tween(200)
+            ) + androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(150))
+        ) {
+            Column(
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                SpeedDialMenuItem(
+                    label = "Ro'yxat",
+                    icon = Icons.Filled.CheckBox,
+                    onClick = {
+                        onDismiss()
+                        onAddChecklistNote()
+                    }
+                )
+                SpeedDialMenuItem(
+                    label = "Rasm",
+                    icon = Icons.Filled.Image,
+                    onClick = {
+                        onDismiss()
+                        onAddImageNote()
+                    }
+                )
+                SpeedDialMenuItem(
+                    label = "Chizish",
+                    icon = Icons.Filled.Brush,
+                    onClick = {
+                        onDismiss()
+                        onAddDrawingNote()
+                    }
+                )
+                SpeedDialMenuItem(
+                    label = "Ovozli eslatma",
+                    icon = Icons.Filled.Mic,
+                    onClick = {
+                        onDismiss()
+                        onAddVoiceNote()
+                    }
+                )
+            }
+        }
+
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.primaryContainer,
+            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+            shadowElevation = 6.dp,
+            tonalElevation = 6.dp,
+            modifier = Modifier
+                .size(56.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .combinedClickable(
+                    onClick = {
+                        if (isExpanded) {
+                            onDismiss()
+                        } else {
+                            onAddNote()
+                        }
+                    },
+                    onLongClick = {
+                        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                        onToggleExpand()
+                    }
+                )
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = Icons.Filled.Add,
+                    contentDescription = "New note",
+                    modifier = Modifier
+                        .size(28.dp)
+                        .rotate(fabRotation)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SpeedDialMenuItem(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    onClick: () -> Unit
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.End,
+        modifier = Modifier
+            .clickable(
+                interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                indication = null,
+                onClick = onClick
+            )
+            .padding(end = 6.dp)
+    ) {
+        Surface(
+            shape = RoundedCornerShape(8.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            tonalElevation = 3.dp,
+            shadowElevation = 3.dp,
+            modifier = Modifier.padding(end = 12.dp)
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+            )
+        }
+
+        Surface(
+            shape = CircleShape,
+            color = MaterialTheme.colorScheme.secondaryContainer,
+            contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+            shadowElevation = 4.dp,
+            tonalElevation = 4.dp,
+            modifier = Modifier
+                .size(44.dp)
+                .clip(CircleShape)
+                .clickable(onClick = onClick)
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = label,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
         }
     }
 }

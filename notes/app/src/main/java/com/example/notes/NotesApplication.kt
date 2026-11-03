@@ -72,6 +72,7 @@ class NotesApplication : Application() {
         // a no-op if it's already scheduled.
         com.example.notes.work.SyncRepositoryLocator.set(syncRepository)
         com.example.notes.work.BackgroundSyncWorker.schedule(this)
+        com.example.notes.work.DailyReminderWorker.schedule(this)
 
         // V5.3 (BUG 8) — if the previous process queued a push but
         // was killed before draining it, fire one now. The version is

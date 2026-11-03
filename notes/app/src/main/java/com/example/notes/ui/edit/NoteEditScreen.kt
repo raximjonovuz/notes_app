@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.BitmapFactory
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -22,8 +23,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -123,7 +126,11 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -135,6 +142,15 @@ import androidx.compose.ui.text.input.TransformedText
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.runtime.key
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.net.toUri
@@ -144,6 +160,7 @@ import com.example.notes.ui.theme.noteCardOnColor
 import com.example.notes.ui.theme.notesHeaderBackground
 import com.example.notes.ui.theme.notesPageBackground
 import kotlinx.coroutines.delay
+import kotlin.math.roundToInt
 
 private fun persistReadPermission(context: Context, uri: Uri) {
     try {
@@ -178,9 +195,24 @@ private fun shareNote(context: Context, title: String, content: String) {
  * bold/italic/underline/color is applied via SpanStyle.
  * --------------------------------------------------------------------- */
 private fun richTextVisualTransformation(
-    ranges: List<StyleRange>
+    ranges: List<StyleRange>,
+    // FIX: per-line font-size overrides (A+/A- on a multi-line block)
+    // were stored but never rendered. They are applied here as spans.
+    fontSizesByLine: Map<Int, Int> = emptyMap()
 ): VisualTransformation = VisualTransformation { text ->
-    val annotated = StyleRanges.toAnnotatedString(text.text, ranges)
+    val raw = text.text
+    val base = StyleRanges.toAnnotatedString(raw, ranges)
+    val annotated = if (fontSizesByLine.isEmpty()) base else buildAnnotatedString {
+        append(base)
+        var start = 0
+        raw.split('\n').forEachIndexed { idx, line ->
+            val size = fontSizesByLine[idx]
+            if (size != null && line.isNotEmpty()) {
+                addStyle(SpanStyle(fontSize = fontSizeSpFor(size)), start, start + line.length)
+            }
+            start += line.length + 1
+        }
+    }
     TransformedText(annotated, OffsetMapping.Identity)
 }
 
@@ -189,6 +221,8 @@ private fun richTextVisualTransformation(
 fun NoteEditScreen(
     noteId: Long?,
     viewModel: NoteEditViewModel,
+    startAsChecklist: Boolean = false,
+    initialImageUri: String? = null,
     onBack: () -> Unit
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -216,7 +250,13 @@ fun NoteEditScreen(
         if ((noteId == null || noteId == 0L) &&
             state.blocks.isEmpty()
         ) {
+            if (!initialImageUri.isNullOrBlank()) {
+                viewModel.addImageUri(initialImageUri)
+            }
             viewModel.addEmptyTextBlockAtEnd()
+            if (startAsChecklist) {
+                viewModel.toggleChecklist()
+            }
             delay(80)
             try {
                 firstBlockFocusRequester.requestFocus()
@@ -298,7 +338,14 @@ fun NoteEditScreen(
             ab.listTypesByLine[activeLineIdx] ?: ab.listType
         else -> 0
     }
-    val activeIsChecklist = activeBlock?.isChecklist == true
+    val activeIsChecklist = when (val ab = activeBlock) {
+        is ContentBlock.TextBlock -> {
+            val lines = ab.text.split('\n')
+            val line = lines.getOrNull(activeLineIdx) ?: ""
+            line.startsWith("- [ ] ") || line.startsWith("- [x] ") || line.startsWith("- [X] ")
+        }
+        else -> false
+    }
 
     // Per-attribute "fully styled" flags (only meaningful with a non-collapsed
     // selection). The activeBlockId is in scope so recomposition is fine.
@@ -436,6 +483,12 @@ fun NoteEditScreen(
         )
     }
 
+    BackHandler {
+        viewModel.saveNow()
+        viewModel.flushPendingPush()
+        onBack()
+    }
+
     val onColor = noteCardOnColor(state.backgroundColor)
 
     Scaffold(
@@ -468,7 +521,10 @@ fun NoteEditScreen(
                         ),
                         label = "pinBounce"
                     )
-                    IconButton(onClick = { viewModel.togglePinned() }) {
+                    IconButton(
+                        onClick = { viewModel.togglePinned() },
+                        modifier = Modifier.size(38.dp)
+                    ) {
                         Icon(
                             imageVector = if (state.isPinned) Icons.Filled.PushPin else Icons.Outlined.PushPin,
                             contentDescription = if (state.isPinned) "Unpin" else "Pin",
@@ -479,22 +535,6 @@ fun NoteEditScreen(
                             }
                         )
                     }
-                    /*
-                    IconButton(onClick = {
-                        scope.launch {
-                            snackbarHostState.showSnackbar(
-                                message = "Reminder feature coming soon",
-                                duration = androidx.compose.material3.SnackbarDuration.Short
-                            )
-                        }
-                    }) {
-                        Icon(
-                            imageVector = Icons.Filled.Notifications,
-                            contentDescription = "Reminder",
-                            tint = onColor
-                        )
-                    }
-                    */
                     val starScale by androidx.compose.animation.core.animateFloatAsState(
                         targetValue = if (state.isFavorite) 1.25f else 1.0f,
                         animationSpec = androidx.compose.animation.core.spring(
@@ -503,7 +543,10 @@ fun NoteEditScreen(
                         ),
                         label = "starBounce"
                     )
-                    IconButton(onClick = { viewModel.toggleFavorite() }) {
+                    IconButton(
+                        onClick = { viewModel.toggleFavorite() },
+                        modifier = Modifier.size(38.dp)
+                    ) {
                         Icon(
                             imageVector = if (state.isFavorite) Icons.Filled.Star else Icons.Filled.StarBorder,
                             contentDescription = "Favorite",
@@ -516,7 +559,8 @@ fun NoteEditScreen(
                     }
                     IconButton(
                         onClick = { viewModel.undo() },
-                        enabled = canUndo
+                        enabled = canUndo,
+                        modifier = Modifier.size(38.dp)
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.Undo,
@@ -526,7 +570,8 @@ fun NoteEditScreen(
                     }
                     IconButton(
                         onClick = { viewModel.redo() },
-                        enabled = canRedo
+                        enabled = canRedo,
+                        modifier = Modifier.size(38.dp)
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.Redo,
@@ -535,7 +580,10 @@ fun NoteEditScreen(
                         )
                     }
                     Box {
-                        IconButton(onClick = { menuExpanded = true }) {
+                        IconButton(
+                            onClick = { menuExpanded = true },
+                            modifier = Modifier.size(38.dp)
+                        ) {
                             Icon(
                                 imageVector = Icons.Filled.MoreVert,
                                 contentDescription = "More options",
@@ -598,7 +646,7 @@ fun NoteEditScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
                 .background(cardBg)
-                .padding(horizontal = 18.dp, vertical = 8.dp)
+                .padding(horizontal = 18.dp, vertical = 6.dp)
                 .imePadding()
         ) {
             BasicTextField(
@@ -620,7 +668,7 @@ fun NoteEditScreen(
                 ),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 4.dp, bottom = 12.dp),
+                    .padding(top = 2.dp, bottom = 8.dp),
                 decorationBox = { inner ->
                     Box(modifier = Modifier.fillMaxWidth()) {
                         if (state.title.isEmpty()) {
@@ -648,9 +696,6 @@ fun NoteEditScreen(
                     activeBlockId = state.activeBlockId,
                     onBlockValueChange = viewModel::onBlockValueChange,
                     onBlockFocused = viewModel::onBlockFocused,
-                    onToggleChecklistLine = { blockId, lineIndex ->
-                        viewModel.toggleChecklistLine(blockId, lineIndex)
-                    },
                     onRemoveImage = { blockId -> viewModel.removeImageBlock(blockId) },
                     onTapImage = { uri -> fullScreenImageUri = uri },
                     failedImageUris = failedImageUris,
@@ -672,6 +717,8 @@ fun NoteEditScreen(
                 isUnderlineActive = isUnderlineActive,
                 isStrikethroughActive = isStrikethroughActive,
                 activeTextColorIndex = activeTextColor,
+                isChecklistActive = activeIsChecklist,
+                onToggleChecklist = viewModel::toggleChecklist,
                 onAddImage = { imagePickerLauncher.launch("image/*") },
                 onBackgroundColorClick = { bgColorPickerVisible = true },
                 onBoldClick = viewModel::toggleBold,
@@ -835,6 +882,8 @@ private fun EditorToolbar(
     isUnderlineActive: Boolean,
     isStrikethroughActive: Boolean,
     activeTextColorIndex: Int,
+    isChecklistActive: Boolean = false,
+    onToggleChecklist: () -> Unit = {},
     onAddImage: () -> Unit,
     onBackgroundColorClick: () -> Unit,
     onBoldClick: () -> Unit,
@@ -951,6 +1000,15 @@ private fun EditorToolbar(
                 modifier = Modifier.size(20.dp)
             )
         }
+
+        ToolbarDivider()
+
+        ToolbarIconButton(
+            imageVector = Icons.Filled.CheckBox,
+            contentDescription = "Checklist",
+            onClick = onToggleChecklist,
+            active = isChecklistActive
+        )
     }
 }
 
@@ -988,7 +1046,6 @@ private fun BlocksEditor(
     activeBlockId: String?,
     onBlockValueChange: (blockId: String, newValue: TextFieldValue) -> Unit,
     onBlockFocused: (blockId: String) -> Unit,
-    onToggleChecklistLine: (blockId: String, lineIndex: Int) -> Unit,
     onRemoveImage: (blockId: String) -> Unit,
     onTapImage: (uri: String) -> Unit,
     // F-05 — which image blocks failed to upload (their local URI is
@@ -1007,10 +1064,9 @@ private fun BlocksEditor(
             .verticalScroll(scrollState)
     ) {
         if (blocks.isEmpty()) {
-            Spacer(Modifier.height(120.dp))
             Text(
-                text = "Start writing...",
-                style = defaultStyle.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
+                text = "Note",
+                style = defaultStyle.copy(color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
             )
             return
         }
@@ -1024,9 +1080,6 @@ private fun BlocksEditor(
                             activeBlockId = activeBlockId,
                             onValueChange = { v -> onBlockValueChange(block.id, v) },
                             onBlockFocused = { onBlockFocused(block.id) },
-                            onToggleLine = { lineIndex ->
-                                onToggleChecklistLine(block.id, lineIndex)
-                            },
                             focusRequester = if (autoFocusFirstBlock && idx == 0) autoFocusRequester else null
                         )
                     } else if (block.listType != 0) {
@@ -1091,7 +1144,9 @@ private fun TextBlockEditor(
     focusRequester: FocusRequester?
 ) {
     val baseStyle = textStyleFor(block)
-    val transformation = remember(block.styleRanges) { richTextVisualTransformation(block.styleRanges) }
+    val transformation = remember(block.styleRanges, block.fontSizesByLine) {
+        richTextVisualTransformation(block.styleRanges, block.fontSizesByLine)
+    }
 
     // BUG FIX: track the block's value locally so we can react to cursor-only
     // changes that don't trigger onValueChange on older Compose BOMs.
@@ -1180,8 +1235,17 @@ private fun ListBlockEditor(
     focusRequester: FocusRequester?
 ) {
     val baseStyle = textStyleFor(block)
-    val transformation = remember(block.styleRanges) { richTextVisualTransformation(block.styleRanges) }
+    val transformation = remember(block.styleRanges, block.fontSizesByLine) {
+        richTextVisualTransformation(block.styleRanges, block.fontSizesByLine)
+    }
     val lines = block.text.split('\n')
+    val density = LocalDensity.current
+    // FIX: bullets / numbers used to sit in a Column with a fixed 2dp
+    // spacing, so any wrapped line (or a different font size) pushed every
+    // later marker out of alignment. Markers are now placed from the real
+    // text layout: one marker at the top of each logical line's first
+    // visual line.
+    var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
 
     Row(
         modifier = Modifier
@@ -1189,36 +1253,49 @@ private fun ListBlockEditor(
             .padding(vertical = 2.dp),
         verticalAlignment = Alignment.Top
     ) {
-        // V5.2.1 — Prefix column: render bullets via a vector icon
-        // instead of the U+2022 glyph. The bullet glyph (•) is missing
-        // from Samsung A55's stock system font and falls back to ":",
-        // which looked like a typo. Icons.Filled.FiberManualRecord is a
-        // tiny filled circle and renders identically everywhere.
-        Column(
-            modifier = Modifier.padding(end = 6.dp, top = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
-            horizontalAlignment = Alignment.End
-        ) {
-            lines.indices.forEach { idx ->
-                when (block.listType) {
-                    2 -> Text(
-                        text = "${idx + 1}.",
-                        style = baseStyle.copy(
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                    )
-                    else -> Icon(
-                        imageVector = Icons.Filled.FiberManualRecord,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.size(6.dp)
-                    )
+        // V5.2.1 — bullets use a vector icon: U+2022 is missing from
+        // some system fonts (Samsung A55) and falls back to ":".
+        Box(modifier = Modifier.width(28.dp).padding(end = 6.dp)) {
+            val l = layout
+            if (l != null && l.lineCount > 0) {
+                var lineStart = 0
+                lines.forEachIndexed { idx, line ->
+                    val start = lineStart
+                    lineStart += line.length + 1
+                    val textLen = l.layoutInput.text.length
+                    val vLine = l.getLineForOffset(start.coerceIn(0, textLen))
+                    val top = l.getLineTop(vLine)
+                    val lineH = l.getLineBottom(vLine) - top
+                    Box(
+                        modifier = Modifier
+                            .offset { IntOffset(0, top.roundToInt()) }
+                            .fillMaxWidth()
+                            .height(with(density) { lineH.toDp() }),
+                        contentAlignment = Alignment.CenterEnd
+                    ) {
+                        when (block.listType) {
+                            2 -> Text(
+                                text = "${idx + 1}.",
+                                style = baseStyle.copy(
+                                    fontSize = fontSizeSpFor(block.fontSizeForLine(idx)),
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            )
+                            else -> Icon(
+                                imageVector = Icons.Filled.FiberManualRecord,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.size(6.dp)
+                            )
+                        }
+                    }
                 }
             }
         }
         BasicTextField(
             value = block.value,
             onValueChange = onValueChange,
+            onTextLayout = { layout = it },
             textStyle = baseStyle.copy(
                 color = MaterialTheme.colorScheme.onSurface
             ),
@@ -1276,200 +1353,332 @@ private fun ListBlockEditor(
  *     format stays stable for the parser.
  * --------------------------------------------------------------------- */
 
+private fun serializeItems(items: List<ChecklistItemState>): String =
+    items.joinToString("\n") { item ->
+        if (item.hasCheckbox) (if (item.done) "- [x] " else "- [ ] ") + item.text
+        else item.text
+    }
+
+private fun parseItems(text: String, previous: List<ChecklistItemState> = emptyList()): List<ChecklistItemState> {
+    val parsed = text.split('\n').mapIndexed { index, line ->
+        val p = parseChecklistLine(line)
+        ChecklistItemState(
+            id = previous.getOrNull(index)?.id ?: java.util.UUID.randomUUID().toString(),
+            hasCheckbox = p.hasCheckbox,
+            done = p.done,
+            text = p.text
+        )
+    }
+    return parsed.ifEmpty {
+        listOf(ChecklistItemState(id = java.util.UUID.randomUUID().toString(), hasCheckbox = true, done = false, text = ""))
+    }
+}
+
+/** Offset (inside the serialized block text) where row [idx]'s own text begins. */
+private fun rowTextStart(items: List<ChecklistItemState>, idx: Int): Int {
+    var off = 0
+    for (i in 0 until idx) off += (if (items[i].hasCheckbox) 6 else 0) + items[i].text.length + 1
+    return off + (if (items[idx].hasCheckbox) 6 else 0)
+}
+
+/** Slice the block-level style ranges down to one row (row-local offsets). */
+private fun rangesForRow(ranges: List<StyleRange>, textStart: Int, textLen: Int): List<StyleRange> {
+    val textEnd = textStart + textLen
+    val out = ArrayList<StyleRange>()
+    for (r in ranges) {
+        if (r.start == r.end) {
+            if (r.start in textStart..textEnd) out += r.copy(start = r.start - textStart, end = r.start - textStart)
+        } else {
+            val s = maxOf(r.start, textStart)
+            val e = minOf(r.end, textEnd)
+            if (e > s) out += r.copy(start = s - textStart, end = e - textStart)
+        }
+    }
+    return out
+}
+
+/** Which row should grab focus next, and where its caret goes (-1 = end). */
+private data class PendingFocus(val itemId: String, val cursor: Int)
+
 @Composable
 private fun ChecklistBlockEditor(
     block: ContentBlock.TextBlock,
     activeBlockId: String?,
     onValueChange: (TextFieldValue) -> Unit,
     onBlockFocused: () -> Unit,
-    onToggleLine: (lineIndex: Int) -> Unit,
     focusRequester: FocusRequester?
 ) {
-    val baseStyle = textStyleFor(block)
-    // Parse the canonical `- [ ] x` / `- [x] x` form back into structured
-    // rows. Recomputes only when the underlying block.text changes.
-    val items = remember(block.text) {
-        block.text.split('\n').map(::parseChecklistLine)
+    var itemsState by remember(block.id) { mutableStateOf(parseItems(block.text)) }
+    var pendingFocus by remember { mutableStateOf<PendingFocus?>(null) }
+
+    // Toolbar (toggleChecklist) or undo/redo changed block.text from outside -> re-parse.
+    LaunchedEffect(block.text) {
+        if (serializeItems(itemsState) != block.text) {
+            itemsState = parseItems(block.text, previous = itemsState)
+        }
     }
 
-    fun serialize(updated: List<ChecklistLine>): String =
-        updated.joinToString("\n") { line ->
-            val marker = if (line.done) "- [x] " else "- [ ] "
-            marker + line.text
-        }
+    // FIX: the caret used to be reported as TextRange(0) after every
+    // edit and per-row cursor moves never reached the ViewModel, so every
+    // toolbar action (checklist toggle, A+/A-, B/I/U/colour) operated on
+    // line 0 / offset 0. Now the real caret, translated into an offset in
+    // the serialized block text, is sent with every update.
+    fun commitUpdate(
+        updated: List<ChecklistItemState>,
+        selection: TextRange,
+        composing: Boolean = false
+    ) {
+        itemsState = updated
+        val text = serializeItems(updated)
+        val sel = TextRange(selection.start.coerceIn(0, text.length), selection.end.coerceIn(0, text.length))
+        onValueChange(
+            TextFieldValue(
+                text = text,
+                selection = sel,
+                // A non-null composition tells the ViewModel the IME is
+                // mid-word, so it doesn't push an undo snapshot per key.
+                composition = if (composing) TextRange(sel.min, sel.max) else null
+            )
+        )
+    }
+
+    fun rowSelection(items: List<ChecklistItemState>, idx: Int, local: TextRange): TextRange {
+        val start = rowTextStart(items, idx)
+        val len = items[idx].text.length
+        return TextRange(start + local.start.coerceIn(0, len), start + local.end.coerceIn(0, len))
+    }
 
     Column(modifier = Modifier.padding(vertical = 2.dp)) {
-        items.forEachIndexed { lineIdx, item ->
-            ChecklistLineRow(
-                lineKey = "${block.id}:$lineIdx",
-                item = item,
-                isOnlyLine = items.size == 1 && item.text.isBlank(),
-                baseStyle = baseStyle,
-                onCheckedChange = { onToggleLine(lineIdx) },
-                onTextChange = { newText ->
-                    val working = items.toMutableList()
-                    while (working.size <= lineIdx) working.add(ChecklistLine(false, ""))
-                    // Drop the leading marker if the user typed it.
-                    val cleaned = when {
-                        newText.startsWith("- [ ] ") -> newText.removePrefix("- [ ] ")
-                        newText.startsWith("- [x] ") || newText.startsWith("- [X] ") ->
-                            newText.removePrefix("- [x] ").removePrefix("- [X] ")
-                        else -> newText
-                    }
-                    working[lineIdx] = ChecklistLine(done = item.done, text = cleaned)
-                    onValueChange(
-                        TextFieldValue(
-                            text = serialize(working),
-                            // V5.1.1 — each row owns its own caret now; we no
-                            // longer need the parent's best-effort guess.
-                            // The line child stays in sync via its own local
-                            // TextFieldValue, so passing selection=0 is fine.
-                            selection = TextRange(0)
-                        )
-                    )
-                },
-                onAddLine = {
-                    val working = items.toMutableList()
-                    // Insert a fresh empty item AFTER the current one.
-                    working.add(lineIdx + 1, ChecklistLine(false, ""))
-                    onValueChange(
-                        TextFieldValue(text = serialize(working), selection = TextRange(Int.MAX_VALUE))
-                    )
-                },
-                onRemoveIfEmpty = {
-                    // Only allow removal when there are 2+ items AND the
-                    // current one is blank. Single empty item is kept as
-                    // a drafting target so the editor never disappears.
-                    if (items.size > 1 && item.text.isBlank()) {
-                        val working = items.toMutableList()
-                        working.removeAt(lineIdx)
-                        onValueChange(
-                            TextFieldValue(text = serialize(working), selection = TextRange(0))
-                        )
-                    }
-                },
-                onFocused = onBlockFocused,
-                focusRequester = if (lineIdx == 0) focusRequester else null
-            )
+        itemsState.forEachIndexed { lineIdx, item ->
+            key(item.id) {
+                val isLast = lineIdx == itemsState.lastIndex
+                val isOnly = itemsState.size == 1
+                // Per-line font size is rendered here too (block default + override).
+                val rowStyle = textStyleFor(block).copy(
+                    fontSize = fontSizeSpFor(block.fontSizeForLine(lineIdx))
+                )
+                val rowRanges = rangesForRow(
+                    block.styleRanges,
+                    rowTextStart(itemsState, lineIdx),
+                    item.text.length
+                )
+                ChecklistLineRow(
+                    item = item,
+                    isOnlyLine = isOnly,
+                    isLastLine = isLast,
+                    baseStyle = rowStyle,
+                    rowRanges = rowRanges,
+                    shouldFocus = pendingFocus?.itemId == item.id,
+                    focusCursor = pendingFocus?.cursor ?: -1,
+                    onFocusConsumed = { if (pendingFocus?.itemId == item.id) pendingFocus = null },
+                    onCheckedChange = {
+                        val working = itemsState.toMutableList()
+                        if (lineIdx in working.indices) {
+                            working[lineIdx] = working[lineIdx].copy(done = !working[lineIdx].done)
+                            // "- [ ] " and "- [x] " have the same length -> caret offsets stay valid.
+                            commitUpdate(working, block.selection)
+                        }
+                    },
+                    onTextChange = { newText, localSel, composing ->
+                        val working = itemsState.toMutableList()
+                        if (lineIdx in working.indices) {
+                            working[lineIdx] = working[lineIdx].copy(text = newText)
+                            commitUpdate(working, rowSelection(working, lineIdx, localSel), composing)
+                        }
+                    },
+                    onSelectionChange = { localSel ->
+                        if (lineIdx in itemsState.indices) {
+                            commitUpdate(itemsState, rowSelection(itemsState, lineIdx, localSel))
+                        }
+                    },
+                    // Enter / paste: split this row at the caret.
+                    onSplitAndAddLine = { beforeNewline, afterNewline ->
+                        val working = itemsState.toMutableList()
+                        if (lineIdx in working.indices) {
+                            val hasBox = working[lineIdx].hasCheckbox
+                            working[lineIdx] = working[lineIdx].copy(text = beforeNewline)
+                            val pieces = afterNewline.split('\n')
+                            var firstNewId = ""
+                            var lastNewId = ""
+                            pieces.forEachIndexed { i, piece ->
+                                val newId = java.util.UUID.randomUUID().toString()
+                                if (i == 0) firstNewId = newId
+                                lastNewId = newId
+                                working.add(
+                                    lineIdx + 1 + i,
+                                    ChecklistItemState(id = newId, hasCheckbox = hasBox, done = false, text = piece)
+                                )
+                            }
+                            // Typed Enter -> caret at the START of the moved text.
+                            // Multi-line paste -> caret at the end of the last pasted row.
+                            val single = pieces.size == 1
+                            val targetId = if (single) firstNewId else lastNewId
+                            val targetIdx = lineIdx + (if (single) 1 else pieces.size)
+                            val targetLocal = if (single) 0 else working[targetIdx].text.length
+                            val caret = rowTextStart(working, targetIdx) + targetLocal
+                            commitUpdate(working, TextRange(caret))
+                            pendingFocus = PendingFocus(targetId, if (single) 0 else -1)
+                        }
+                    },
+                    // Backspace at the very start of a row: merge it into the previous row.
+                    // (Also covers the old "Backspace on an empty row removes it".)
+                    onBackspaceAtStart = {
+                        if (lineIdx > 0) {
+                            val working = itemsState.toMutableList()
+                            val prev = working[lineIdx - 1]
+                            working[lineIdx - 1] = prev.copy(text = prev.text + working[lineIdx].text)
+                            working.removeAt(lineIdx)
+                            val caret = rowTextStart(working, lineIdx - 1) + prev.text.length
+                            commitUpdate(working, TextRange(caret))
+                            pendingFocus = PendingFocus(prev.id, prev.text.length)
+                            true
+                        } else false
+                    },
+                    onFocused = onBlockFocused,
+                    initialFocusRequester = if (lineIdx == 0) focusRequester else null
+                )
+            }
         }
     }
 }
 
 @Composable
 private fun ChecklistLineRow(
-    /**
-     * V5.1.1 — stable remember key for the row's local TextFieldValue.
-     * Identifies a single checklist row across recompositions so the
-     * caret doesn't reset when item.text changes underneath us.
-     */
-    lineKey: String,
-    item: ChecklistLine,
+    item: ChecklistItemState,
     isOnlyLine: Boolean,
+    isLastLine: Boolean,
     baseStyle: TextStyle,
+    rowRanges: List<StyleRange>,
+    shouldFocus: Boolean,
+    focusCursor: Int,
+    onFocusConsumed: () -> Unit,
     onCheckedChange: () -> Unit,
-    onTextChange: (String) -> Unit,
-    onAddLine: () -> Unit,
-    onRemoveIfEmpty: () -> Unit,
+    onTextChange: (text: String, selection: TextRange, composing: Boolean) -> Unit,
+    onSelectionChange: (TextRange) -> Unit,
+    onSplitAndAddLine: (before: String, after: String) -> Unit,
+    onBackspaceAtStart: () -> Boolean,
     onFocused: () -> Unit,
-    focusRequester: FocusRequester?
+    initialFocusRequester: FocusRequester?
 ) {
-    // V5.1.1 — local TextFieldValue so the caret doesn't reset to 0 on
-    // every keystroke. Previously `value = TextFieldValue(item.text)`
-    // rebuilt the field's state from the block.text-derived item each
-    // render, dropping selection; the user saw characters appear with
-    // the caret glued to the start. Now the caret lives in local state
-    // and we only re-sync when item.text changes from the OUTSIDE
-    // (undo/redo, programmatic).
-    var localValue by remember(lineKey) {
+    val rowFocusRequester = initialFocusRequester ?: remember { FocusRequester() }
+
+    var localValue by remember {
         mutableStateOf(TextFieldValue(item.text, selection = TextRange(item.text.length)))
     }
-    LaunchedEffect(item.text) {
-        if (localValue.text != item.text) {
-            localValue = TextFieldValue(
-                text = item.text,
-                selection = TextRange(item.text.length)
-            )
+
+    LaunchedEffect(shouldFocus) {
+        if (shouldFocus) {
+            if (focusCursor >= 0) {
+                val c = focusCursor.coerceAtMost(localValue.text.length)
+                localValue = localValue.copy(selection = TextRange(c))
+            } else {
+                localValue = localValue.copy(selection = TextRange(localValue.text.length))
+            }
+            runCatching { rowFocusRequester.requestFocus() }
+            onFocusConsumed()
         }
     }
 
+    // Text changed from outside (undo/redo, toolbar) -> keep the caret if possible.
+    LaunchedEffect(item.text) {
+        if (localValue.text != item.text) {
+            val cursor = localValue.selection.start.coerceAtMost(item.text.length)
+            localValue = TextFieldValue(text = item.text, selection = TextRange(cursor))
+        }
+    }
+
+    val transformation = remember(rowRanges) { richTextVisualTransformation(rowRanges) }
+
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 1.dp),
+        modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        IconButton(
-            onClick = onCheckedChange,
-            modifier = Modifier.size(28.dp)
-        ) {
-            Icon(
-                imageVector = if (item.done) Icons.Filled.CheckBox
-                else Icons.Filled.CheckBoxOutlineBlank,
-                contentDescription = if (item.done) "Mark not done" else "Mark done",
-                tint = if (item.done) MaterialTheme.colorScheme.primary
-                else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(20.dp)
-            )
+        if (item.hasCheckbox) {
+            IconButton(onClick = onCheckedChange, modifier = Modifier.size(28.dp)) {
+                Icon(
+                    imageVector = if (item.done) Icons.Filled.CheckBox else Icons.Filled.CheckBoxOutlineBlank,
+                    contentDescription = null,
+                    tint = if (item.done) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        } else {
+            Spacer(modifier = Modifier.width(8.dp))
         }
 
         BasicTextField(
             value = localValue,
             onValueChange = { newValue ->
-                // Enter / newline on the IME inserts a new line; we apply
-                // the pre-newline portion to the current row and add a
-                // fresh row below.
                 val raw = newValue.text
                 if (raw.contains('\n')) {
-                    val cleaned = raw.substringBefore('\n')
-                    localValue = TextFieldValue(
-                        text = cleaned,
-                        selection = TextRange(cleaned.length)
-                    )
-                    onTextChange(cleaned)
-                    onAddLine()
+                    val nl = raw.indexOf('\n')
+                    // Split at the first newline; everything after it moves down.
+                    val before = raw.substring(0, nl)
+                    val after = raw.substring(nl + 1)
+                    localValue = TextFieldValue(text = before, selection = TextRange(before.length))
+                    onSplitAndAddLine(before, after)
                     return@BasicTextField
                 }
-                // Backspace that empties the row — if it's the only row
-                // we just clear the text, otherwise remove it (the
-                // caller enforces the "only-line stays as draft" rule).
+                val textChanged = raw != localValue.text
                 localValue = newValue
-                when {
-                    raw.isEmpty() && item.text.isNotEmpty() -> onTextChange("")
-                    raw.isEmpty() && isOnlyLine -> onTextChange("")
-                    raw.isEmpty() -> onRemoveIfEmpty()
-                    else -> onTextChange(raw)
+                if (textChanged) {
+                    onTextChange(raw, newValue.selection, newValue.composition != null)
+                } else {
+                    onSelectionChange(newValue.selection)
                 }
             },
             textStyle = baseStyle.copy(
+                textDecoration = if (item.done) TextDecoration.LineThrough else TextDecoration.None,
                 color = if (item.done) MaterialTheme.colorScheme.onSurfaceVariant
                 else MaterialTheme.colorScheme.onSurface
             ),
             cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+            visualTransformation = transformation,
             keyboardOptions = KeyboardOptions(
                 keyboardType = KeyboardType.Text,
                 imeAction = ImeAction.Default,
                 autoCorrectEnabled = false,
-                capitalization = androidx.compose.ui.text.input.KeyboardCapitalization.Sentences
+                capitalization = KeyboardCapitalization.Sentences
             ),
             modifier = Modifier
                 .weight(1f)
                 .padding(start = 4.dp, end = 4.dp)
                 .onFocusChanged { state ->
-                    if (state.isFocused) onFocused()
+                    if (state.isFocused) {
+                        onFocused()
+                        // Tell the ViewModel which row/caret is active so the
+                        // toolbar acts on this line, not on line 0.
+                        onSelectionChange(localValue.selection)
+                    }
                 }
-                .then(
-                    if (focusRequester != null) Modifier.focusRequester(focusRequester)
-                    else Modifier
-                ),
+                .focusRequester(rowFocusRequester)
+                .onPreviewKeyEvent { event ->
+                    if (event.type == KeyEventType.KeyDown &&
+                        event.key == Key.Backspace &&
+                        localValue.selection.collapsed &&
+                        localValue.selection.start == 0
+                    ) {
+                        onBackspaceAtStart()
+                    } else false
+                },
             decorationBox = { inner ->
                 Box(modifier = Modifier.fillMaxWidth()) {
                     if (item.text.isEmpty()) {
-                        Text(
-                            text = if (isOnlyLine) "Add checklist item…" else "New item…",
-                            style = baseStyle.copy(
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                        val placeholder = when {
+                            isOnlyLine && item.hasCheckbox -> "Ro'yxat elementi..."
+                            isOnlyLine && !item.hasCheckbox -> "Matn kiriting..."
+                            isLastLine && item.hasCheckbox -> "Ro'yxat elementi..."
+                            else -> null
+                        }
+                        if (placeholder != null) {
+                            Text(
+                                text = placeholder,
+                                style = baseStyle.copy(
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                                )
                             )
-                        )
+                        }
                     }
                     inner()
                 }
@@ -1478,15 +1687,22 @@ private fun ChecklistLineRow(
     }
 }
 
-private data class ChecklistLine(val done: Boolean, val text: String)
+private data class ChecklistItemState(
+    val id: String = java.util.UUID.randomUUID().toString(),
+    val hasCheckbox: Boolean,
+    val done: Boolean,
+    val text: String
+)
+
+private data class ChecklistLine(val hasCheckbox: Boolean, val done: Boolean, val text: String)
 
 private fun parseChecklistLine(line: String): ChecklistLine {
     return when {
         line.startsWith("- [x] ") || line.startsWith("- [X] ") ->
-            ChecklistLine(done = true, text = line.removePrefix("- [x] ").removePrefix("- [X] "))
+            ChecklistLine(hasCheckbox = true, done = true, text = line.removePrefix("- [x] ").removePrefix("- [X] "))
         line.startsWith("- [ ] ") ->
-            ChecklistLine(done = false, text = line.removePrefix("- [ ] "))
-        else -> ChecklistLine(done = false, text = line)
+            ChecklistLine(hasCheckbox = true, done = false, text = line.removePrefix("- [ ] "))
+        else -> ChecklistLine(hasCheckbox = false, done = false, text = line)
     }
 }
 

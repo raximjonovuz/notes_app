@@ -460,7 +460,12 @@ class NoteEditViewModel(
                 block.copy(
                     text = newValue.text,
                     selection = newValue.selection,
-                    styleRanges = aligned
+                    styleRanges = aligned,
+                    // FIX: per-line maps are keyed by line index; keep them
+                    // attached to their lines when Enter / delete adds or
+                    // removes lines above them.
+                    fontSizesByLine = remapLineMap(block.fontSizesByLine, block.text, newValue.text),
+                    listTypesByLine = remapLineMap(block.listTypesByLine, block.text, newValue.text)
                 )
             } else block
         }
@@ -469,6 +474,31 @@ class NoteEditViewModel(
             activeBlockId = blockId
         )
         scheduleAutosaveIfReady(composing = newValue.composition != null)
+    }
+
+    /**
+     * Re-key a per-line map after a text edit. The edit starts at the
+     * first differing character; lines strictly below the edited line
+     * move by the change in line count, lines above stay put.
+     */
+    private fun remapLineMap(map: Map<Int, Int>, oldText: String, newText: String): Map<Int, Int> {
+        if (map.isEmpty() || oldText == newText) return map
+        val delta = newText.count { it == '\n' } - oldText.count { it == '\n' }
+        if (delta == 0) return map
+        var prefix = 0
+        val minLen = minOf(oldText.length, newText.length)
+        while (prefix < minLen && oldText[prefix] == newText[prefix]) prefix++
+        var editLine = 0
+        for (i in 0 until prefix) if (newText[i] == '\n') editLine++
+        val out = LinkedHashMap<Int, Int>()
+        for ((line, v) in map) {
+            when {
+                line <= editLine -> out[line] = v
+                line + delta > editLine -> out[line + delta] = v
+                // line was swallowed by the deletion -> drop its override
+            }
+        }
+        return out
     }
 
     fun onBlockFocused(blockId: String) {
@@ -706,11 +736,13 @@ class NoteEditViewModel(
                 transform(block)
             } else block
         }
+        // FIX: snapshot the state BEFORE the mutation. It used to be
+        // pushed after, so undo restored the already-changed state.
+        pushUndoSnapshot()
         _state.value = current.copy(
             blocks = newBlocks,
             activeBlockId = if (setActive) activeId else current.activeBlockId
         )
-        pushUndoSnapshot()
         scheduleAutosave()
     }
 
@@ -729,11 +761,11 @@ class NoteEditViewModel(
                 transform(block)
             } else block
         }
+        pushUndoSnapshot() // FIX: before the mutation (see commitActiveBlock)
         _state.value = current.copy(
             blocks = newBlocks,
             activeBlockId = if (setActive) activeId else current.activeBlockId
         )
-        pushUndoSnapshot()
         scheduleAutosave()
     }
 
@@ -891,79 +923,122 @@ class NoteEditViewModel(
     }
 
     /**
-     * V5.1.7 — apply list type to the line containing the caret. Falls
-     * back to the block default when [block] is single-line so the
-     * single-line UX matches V5.1 behaviour. Mirrors the WYSIWYG
-     * "relevant part" semantics of B/I/U.
+     * FIX — the toolbar must target the block the user is typing in
+     * ([NoteEditState.activeBlockId]); the first text block is only a
+     * fallback for when nothing has focus yet. Previously every
+     * block-level action (list type, checklist, font size) always hit
+     * the FIRST text block, so in a note with an image or several text
+     * blocks the toolbar changed the wrong one.
+     */
+    private fun activeTextBlock(): ContentBlock.TextBlock? {
+        val s = _state.value
+        val id = s.activeBlockId
+        return (s.blocks.firstOrNull { it is ContentBlock.TextBlock && it.id == id }
+            ?: s.blocks.firstOrNull { it is ContentBlock.TextBlock }) as? ContentBlock.TextBlock
+    }
+
+    private fun checklistPrefixLen(line: String): Int =
+        if (line.startsWith("- [ ] ") || line.startsWith("- [x] ") || line.startsWith("- [X] ")) 6 else 0
+
+    /** Remove every "- [ ] " / "- [x] " prefix, keeping styleRanges aligned. */
+    private fun stripChecklistPrefixes(block: ContentBlock.TextBlock): ContentBlock.TextBlock {
+        val lines = block.text.split('\n')
+        // Line start offsets in the ORIGINAL text.
+        val starts = IntArray(lines.size)
+        var off = 0
+        for (i in lines.indices) { starts[i] = off; off += lines[i].length + 1 }
+        var ranges = block.styleRanges
+        var selStart = block.selection.start
+        var selEnd = block.selection.end
+        // Walk bottom-up so earlier offsets stay valid.
+        for (i in lines.indices.reversed()) {
+            val p = checklistPrefixLen(lines[i])
+            if (p == 0) continue
+            ranges = StyleRanges.shiftOnEdit(ranges, starts[i], p, 0)
+            if (selStart > starts[i]) selStart = maxOf(starts[i], selStart - p)
+            if (selEnd > starts[i]) selEnd = maxOf(starts[i], selEnd - p)
+        }
+        val newText = lines.joinToString("\n") { it.substring(checklistPrefixLen(it)) }
+        return block.copy(
+            text = newText,
+            styleRanges = ranges,
+            selection = TextRange(selStart.coerceIn(0, newText.length), selEnd.coerceIn(0, newText.length)),
+            isChecklist = false
+        )
+    }
+
+    /**
+     * V5.1.7 — list type is applied to the whole active block.
+     *
+     * FIX: the per-line variant only wrote [ContentBlock.TextBlock.listTypesByLine],
+     * but the editor decides whether to render a list from
+     * `block.listType != 0`, so on any multi-line block the bullet /
+     * numbered buttons did nothing visible. Tapping the active type again
+     * now switches the list off (it used to be impossible on single-line
+     * blocks). Bullet / numbered / checklist are mutually exclusive, and
+     * leaving checklist mode strips the `- [ ] ` prefixes so they don't
+     * leak into the list as literal text.
      */
     fun setListType(type: Int) {
         val clamped = type.coerceIn(0, 2)
-        val current = _state.value
-        val block = current.blocks.firstOrNull { it is ContentBlock.TextBlock }
-            as? ContentBlock.TextBlock ?: return
-        // V5.2.2 — bullet, numbered and checklist are mutually
-        // exclusive. Toggling list on clears any checklist flag on the
-        // same block so the renderer only has to look at one switch.
+        val block = activeTextBlock() ?: return
         applyBlockUpdate { target ->
             if (target.id != block.id) return@applyBlockUpdate target
-            if (block.text.count { it == '\n' } == 0) {
-                target.copy(
-                    listType = clamped,
-                    isChecklist = false
-                )
-            } else {
-                val lineIdx = cursorLineIndex(block)
-                val newMap = target.listTypesByLine.toMutableMap()
-                val cur = newMap[lineIdx] ?: target.listType
-                if (cur == clamped && !target.isChecklist) {
-                    newMap.remove(lineIdx)
-                } else {
-                    newMap[lineIdx] = clamped
-                }
-                target.copy(
-                    listTypesByLine = newMap,
-                    isChecklist = false
-                )
-            }
+            val base = if (target.isChecklist) stripChecklistPrefixes(target) else target
+            val next = if (!target.isChecklist && base.listType == clamped) 0 else clamped
+            base.copy(listType = next, listTypesByLine = emptyMap())
         }
     }
 
     /**
-     * V5.2.2 — toggle the checklist flag. We do NOT touch listType
-     * here so a user can have a numbered list whose rows happen to be
-     * checkable. Toggling the checklist on also drops any per-line
-     * list override for the active line so the renderer only has to
-     * look at one switch at a time.
+     * Toggle the checklist prefix on the line that contains the caret.
+     *
+     * FIX: (1) acts on the active block, (2) moves the caret with the
+     * inserted / removed prefix, (3) shifts styleRanges by the exact
+     * edit instead of diffing, (4) strips exactly one prefix (the old
+     * double `removePrefix` could eat a second, literal "- [X] ").
+     * Turning the checklist on clears bullet / numbered list state.
      */
     fun toggleChecklist() {
-        applyBlockUpdate { target ->
-            if (target.id != currentTextBlock()?.id) return@applyBlockUpdate target
-            target.copy(isChecklist = !target.isChecklist)
-        }
-    }
+        val block = activeTextBlock() ?: return
+        val lines = block.text.split('\n').toMutableList()
+        val lineIdx = cursorLineIndex(block).coerceIn(0, lines.lastIndex)
+        var lineStart = 0
+        for (i in 0 until lineIdx) lineStart += lines[i].length + 1
 
-    fun toggleChecklistLine(blockId: String, lineIndex: Int) {
-        val current = _state.value
-        val newBlocks = current.blocks.map { block ->
-            if (block is ContentBlock.TextBlock && block.id == blockId) {
-                val lines = block.text.split('\n')
-                if (lineIndex !in lines.indices) return@map block
-                val updated = lines.toMutableList()
-                val line = updated[lineIndex]
-                updated[lineIndex] = when {
-                    line.startsWith("- [x] ") || line.startsWith("- [X] ") ->
-                        "- [ ] " + line.removePrefix("- [x] ").removePrefix("- [X] ")
-                    line.startsWith("- [ ] ") ->
-                        "- [x] " + line.removePrefix("- [ ] ")
-                    else -> "- [x] $line"
-                }
-                val newText = updated.joinToString("\n")
-                val aligned = StyleRanges.shiftOnTextChange(block.styleRanges, block.text, newText)
-                block.copy(text = newText, styleRanges = aligned)
-            } else block
+        val line = lines[lineIdx]
+        val prefix = checklistPrefixLen(line)
+        val removed = prefix > 0
+        lines[lineIdx] = if (removed) line.substring(prefix) else "- [ ] $line"
+
+        val newText = lines.joinToString("\n")
+        val ranges = if (removed)
+            StyleRanges.shiftOnEdit(block.styleRanges, lineStart, 6, 0)
+        else
+            StyleRanges.shiftOnEdit(block.styleRanges, lineStart, 0, 6)
+
+        fun moveCaret(pos: Int): Int = when {
+            pos <= lineStart -> pos
+            removed -> maxOf(lineStart, pos - 6)
+            else -> pos + 6
         }
-        _state.value = current.copy(blocks = newBlocks)
-        saveNow()
+        val sel = TextRange(
+            moveCaret(block.selection.start).coerceIn(0, newText.length),
+            moveCaret(block.selection.end).coerceIn(0, newText.length)
+        )
+        val hasAnyChecklist = lines.any { checklistPrefixLen(it) > 0 }
+
+        applyBlockUpdate { target ->
+            if (target.id != block.id) return@applyBlockUpdate target
+            target.copy(
+                text = newText,
+                selection = sel,
+                styleRanges = ranges,
+                isChecklist = hasAnyChecklist,
+                listType = if (hasAnyChecklist) 0 else target.listType,
+                listTypesByLine = if (hasAnyChecklist) emptyMap() else target.listTypesByLine
+            )
+        }
     }
 
     /* ---------- Text size (V5.1.7: per-line override) ---------- */
@@ -980,14 +1055,17 @@ class NoteEditViewModel(
         return idx
     }
 
+    // FIX: step from the EFFECTIVE size of the caret line, not from the
+    // block default — otherwise A+ on a line that already has an override
+    // could never go past (blockDefault + 1).
     fun decreaseTextSize() {
         val block = currentTextBlock() ?: return
-        applyFontSize(block, block.fontSize - 1)
+        applyFontSize(block, block.fontSizeForLine(cursorLineIndex(block)) - 1)
     }
 
     fun increaseTextSize() {
         val block = currentTextBlock() ?: return
-        applyFontSize(block, block.fontSize + 1)
+        applyFontSize(block, block.fontSizeForLine(cursorLineIndex(block)) + 1)
     }
 
     fun setTextSizeIndex(index: Int) {
@@ -1001,10 +1079,8 @@ class NoteEditViewModel(
      * line blocks map the change to the block default (so the value
      * stays visible at the top of [TextBlockEditor]); multi-line blocks
      * route the change through [fontSizesByLine] so only the active
-     * line is affected. Renderer support for the per-line override is
-     * deliberately deferred to V5.2 — for now the value is saved but
-     * the active line uses the block default; cursor movement onto an
-     * overridden line will set the toolbar chip accordingly.
+     * line is affected. The editors now render the per-line override
+     * (see richTextVisualTransformation in NoteEditScreen).
      */
     private fun applyFontSize(block: ContentBlock.TextBlock, newVal: Int) {
         val clamped = newVal.coerceIn(0, TEXT_SIZE_VALUES.lastIndex)
@@ -1023,11 +1099,8 @@ class NoteEditViewModel(
         }
     }
 
-    /** Resolve the first text block (the toolbar targets it when no
-     *  cursor is active). Used as the "where do I apply a block-level
-     *  op?" helper for A−/A+. */
-    private fun currentTextBlock(): ContentBlock.TextBlock? =
-        _state.value.blocks.firstOrNull { it is ContentBlock.TextBlock } as? ContentBlock.TextBlock
+    /** The block the toolbar targets: the active one, else the first. */
+    private fun currentTextBlock(): ContentBlock.TextBlock? = activeTextBlock()
 
     /**
      * Apply [transform] to the block the toolbar targets. Skips the
@@ -1036,14 +1109,16 @@ class NoteEditViewModel(
      */
     private fun applyBlockUpdate(transform: (ContentBlock.TextBlock) -> ContentBlock) {
         val current = _state.value
-        val block = current.blocks.firstOrNull { it is ContentBlock.TextBlock } as? ContentBlock.TextBlock
-            ?: return
+        // FIX: target the active block (see activeTextBlock) and snapshot
+        // BEFORE mutating so undo actually restores the previous state.
+        val block = activeTextBlock() ?: return
+        pushUndoSnapshot()
         _state.value = current.copy(
             blocks = current.blocks.map { b ->
                 if (b is ContentBlock.TextBlock && b.id == block.id) transform(b) else b
-            }
+            },
+            activeBlockId = block.id
         )
-        pushUndoSnapshot()
         saveNow()
     }
 
@@ -1349,9 +1424,10 @@ class NoteEditViewModel(
         val (activeId, _) = resolveTargetBlock(current, snackOnFallback = false) ?: return
         val newBlocks = current.blocks.map { block ->
             if (block is ContentBlock.TextBlock && block.id == activeId) {
-                block.copy(fontSize = sizeIndex)
+                block.copy(fontSize = sizeIndex, fontSizesByLine = emptyMap())
             } else block
         }
+        pushUndoSnapshot()
         _state.value = current.copy(blocks = newBlocks)
         saveNow()
     }
@@ -1369,6 +1445,7 @@ class NoteEditViewModel(
         } else {
             list.add(codeBlock)
         }
+        pushUndoSnapshot()
         _state.value = current.copy(blocks = list, activeBlockId = codeBlock.id)
         saveNow()
     }
@@ -1378,10 +1455,16 @@ class NoteEditViewModel(
         val (activeId, _) = resolveTargetBlock(current, snackOnFallback = false) ?: return
         val newBlocks = current.blocks.map { block ->
             if (block is ContentBlock.TextBlock && block.id == activeId) {
-                val newText = if (block.text.startsWith("> ")) block.text else "> ${block.text}"
-                block.copy(text = newText)
+                if (block.text.startsWith("> ")) block
+                else block.copy(
+                    text = "> ${block.text}",
+                    // FIX: the 2-char prefix used to leave every style range 2 chars off.
+                    styleRanges = StyleRanges.shiftOnEdit(block.styleRanges, 0, 0, 2),
+                    selection = TextRange(block.selection.start + 2, block.selection.end + 2)
+                )
             } else block
         }
+        pushUndoSnapshot()
         _state.value = current.copy(blocks = newBlocks)
         saveNow()
     }
@@ -1400,6 +1483,7 @@ class NoteEditViewModel(
             list.add(dividerBlock)
             list.add(nextTextBlock)
         }
+        pushUndoSnapshot()
         _state.value = current.copy(blocks = list, activeBlockId = nextTextBlock.id)
         saveNow()
     }
@@ -1414,6 +1498,7 @@ class NoteEditViewModel(
                 block.copy(text = newText)
             } else block
         }
+        pushUndoSnapshot()
         _state.value = current.copy(blocks = newBlocks)
         saveNow()
     }

@@ -2,8 +2,18 @@ package com.example.notes
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import android.widget.Toast
+import com.google.android.play.core.appupdate.AppUpdateManager
+import com.google.android.play.core.appupdate.AppUpdateManagerFactory
+import com.google.android.play.core.appupdate.AppUpdateOptions
+import com.google.android.play.core.install.InstallStateUpdatedListener
+import com.google.android.play.core.install.model.AppUpdateType
+import com.google.android.play.core.install.model.InstallStatus
+import com.google.android.play.core.install.model.UpdateAvailability
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -81,16 +91,44 @@ private object Routes {
     const val NOTES_LIST = "notes_list"
     const val FAVORITES = "favorites"
     const val TRASH = "trash"
-    const val NOTE_EDIT = "note_edit/{noteId}"
+    const val NOTE_EDIT = "note_edit/{noteId}?checklist={checklist}&imageUri={imageUri}"
     const val SETTINGS = "settings"
     const val LOGIN = "login"
-    fun noteEdit(noteId: Long?): String = "note_edit/${noteId ?: 0L}"
+    fun noteEdit(noteId: Long?, isChecklist: Boolean = false, imageUri: String? = null): String {
+        val id = noteId ?: 0L
+        val encodedImage = if (!imageUri.isNullOrBlank()) java.net.URLEncoder.encode(imageUri, "UTF-8") else ""
+        return "note_edit/$id?checklist=$isChecklist&imageUri=$encodedImage"
+    }
 }
 
 class MainActivity : ComponentActivity() {
+    private var appUpdateManager: AppUpdateManager? = null
+
+    private val updateLauncher = registerForActivityResult(
+        ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        if (result.resultCode != RESULT_OK) {
+            // Update flow completed or cancelled
+        }
+    }
+
+    private val installListener = InstallStateUpdatedListener { state ->
+        if (state.installStatus() == InstallStatus.DOWNLOADED) {
+            Toast.makeText(
+                this,
+                "Yangilanish yuklab olindi! Ilova yangilanmoqda...",
+                Toast.LENGTH_LONG
+            ).show()
+            appUpdateManager?.completeUpdate()
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        checkForAppUpdate()
+        requestNotificationPermission()
 
         val application = applicationContext as NotesApplication
 
@@ -108,18 +146,64 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    private fun checkForAppUpdate() {
+        try {
+            val manager = AppUpdateManagerFactory.create(this)
+            appUpdateManager = manager
+            manager.registerListener(installListener)
+
+            val appUpdateInfoTask = manager.appUpdateInfo
+            appUpdateInfoTask.addOnSuccessListener { appUpdateInfo ->
+                if (appUpdateInfo.updateAvailability() == UpdateAvailability.UPDATE_AVAILABLE
+                    && appUpdateInfo.isUpdateTypeAllowed(AppUpdateType.FLEXIBLE)
+                ) {
+                    manager.startUpdateFlowForResult(
+                        appUpdateInfo,
+                        updateLauncher,
+                        AppUpdateOptions.newBuilder(AppUpdateType.FLEXIBLE).build()
+                    )
+                }
+            }
+        } catch (_: Exception) {
+            // Ignore if Play Store is absent or offline
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        try {
+            appUpdateManager?.appUpdateInfo?.addOnSuccessListener { appUpdateInfo ->
+                if (appUpdateInfo.installStatus() == InstallStatus.DOWNLOADED) {
+                    appUpdateManager?.completeUpdate()
+                }
+            }
+        } catch (_: Exception) {
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        try {
+            appUpdateManager?.unregisterListener(installListener)
+        } catch (_: Exception) {
+        }
+    }
+    private fun requestNotificationPermission() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1002)
+            }
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AppScreen(repository: NoteRepository, application: NotesApplication) {
     val configuration = LocalConfiguration.current
-    // V4.3: restored the original 65% drawer width per design feedback.
-    // V5.1 — reduced to 50% because 65% left only a thin scrim zone that
-    // mis-triggered the FAB on some devices (Samsung A55 5G reported).
-    // 50% keeps the scrim tappable while giving the drawer content more
-    // breathing room without crowding it.
-    val drawerWidth = (configuration.screenWidthDp * 0.50f).dp
+    // 60% drawer width, leaving 40% outside zone for tap-to-dismiss
+    val drawerWidth = (configuration.screenWidthDp * 0.60f).dp
 
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -155,16 +239,13 @@ private fun AppScreen(repository: NoteRepository, application: NotesApplication)
         }
     }
 
-    // Issue 3 — Drawer behavior:
-    //   - gesturesEnabled = false (swipe to open/close disabled)
-    //   - Drawer only opens via the menu button (handled below in AppNavHost)
-    //   - Drawer closes on nav-item tap, or on scrim tap (the area to the
-    //     right of the drawerContent), or when it's more than 35% visible
-    //     and the user taps the outside zone.
-    //
-    // The scrim region provided by ModalNavigationDrawer already calls
-    // drawerState.close() when tapped (this is its built-in behavior).
-    // Additionally, every item's onClick explicitly closes the drawer.
+    val isDrawerOpen = drawerState.isOpen || drawerState.targetValue == DrawerValue.Open
+
+    // Close drawer on system back press when drawer is open
+    BackHandler(enabled = isDrawerOpen) {
+        scope.launch { drawerState.close() }
+    }
+
     val allNotesCount by repository.noteCount.collectAsStateWithLifecycle(initialValue = 0)
     val favoriteCount by repository.favoriteCount.collectAsStateWithLifecycle(initialValue = 0)
     val trashedCount by repository.trashedCount.collectAsStateWithLifecycle(initialValue = 0)
@@ -173,15 +254,11 @@ private fun AppScreen(repository: NoteRepository, application: NotesApplication)
     if (showNavigationDrawer) {
         ModalNavigationDrawer(
             drawerState = drawerState,
-            gesturesEnabled = false,
-            // ModalNavigationDrawer's built-in scrim already handles
-            // tap-to-close on the outside zone (i.e. it calls
-            // drawerState.close() when the area not covered by
-            // drawerContent is tapped).
+            gesturesEnabled = isDrawerOpen,
             drawerContent = {
                 ModalDrawerSheet(
                     modifier = Modifier
-                        .width(minOf((configuration.screenWidthDp * 0.78f).dp, 320.dp))
+                        .width(drawerWidth)
                         .fillMaxHeight(),
                     drawerContainerColor = MaterialTheme.colorScheme.surface
                 ) {
@@ -232,7 +309,11 @@ private fun AppScreen(repository: NoteRepository, application: NotesApplication)
                         onClick = {
                             scope.launch { drawerState.close() }
                             if (currentRoute != Routes.FAVORITES) {
-                                navController.navigate(Routes.FAVORITES)
+                                navController.navigate(Routes.FAVORITES) {
+                                    popUpTo(Routes.NOTES_LIST) { saveState = true }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
                             }
                         },
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
@@ -252,7 +333,11 @@ private fun AppScreen(repository: NoteRepository, application: NotesApplication)
                         onClick = {
                             scope.launch { drawerState.close() }
                             if (currentRoute != Routes.TRASH) {
-                                navController.navigate(Routes.TRASH)
+                                navController.navigate(Routes.TRASH) {
+                                    popUpTo(Routes.NOTES_LIST) { saveState = true }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
                             }
                         },
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
@@ -301,6 +386,7 @@ private fun AppScreen(repository: NoteRepository, application: NotesApplication)
                 application = application,
                 notesListViewModel = notesListViewModel,
                 drawerState = drawerState,
+                isDrawerOpen = isDrawerOpen,
                 scope = scope
             )
         }
@@ -342,6 +428,7 @@ private fun AppScreen(repository: NoteRepository, application: NotesApplication)
             application = application,
             notesListViewModel = notesListViewModel,
             drawerState = drawerState,
+            isDrawerOpen = isDrawerOpen,
             scope = scope
         )
     }
@@ -354,6 +441,7 @@ private fun AppNavHost(
     application: NotesApplication,
     notesListViewModel: NotesListViewModel,
     drawerState: DrawerState,
+    isDrawerOpen: Boolean,
     scope: CoroutineScope
 ) {
     val handleLogout: () -> Unit = {
@@ -394,39 +482,50 @@ private fun AppNavHost(
             )
         }
     ) {
-        composable(Routes.SPLASH) {
-            val hasActiveSession =
-                com.example.notes.data.local.AuthStore.getActive(application) != null
-            if (hasActiveSession) {
-                // If user is already logged in, show splash and proceed to notes list
-                SplashScreen(
-                    onTimeout = {
-                        navController.navigate(Routes.NOTES_LIST) {
-                            popUpTo(Routes.SPLASH) { inclusive = true }
-                        }
-                    }
-                )
-            } else {
-                // Not logged in: Render the seamless animated flow (Splash morphs into Login seamlessly in one container!)
-                com.example.notes.ui.auth.AnimatedLoginFlow(
-                    onAuthenticated = {
-                        navController.navigate(Routes.NOTES_LIST) {
-                            popUpTo(Routes.SPLASH) { inclusive = true }
-                        }
-                    },
-                    onBack = { },
-                    isEntryPoint = true,
-                    startAsSplash = true
-                )
+        composable(
+            route = Routes.SPLASH,
+            exitTransition = {
+                fadeOut(animationSpec = tween(180))
             }
+        ) {
+            SplashScreen(
+                onTimeout = {
+                    val hasActiveSession =
+                        com.example.notes.data.local.AuthStore.getActive(application) != null
+                    val destination =
+                        if (hasActiveSession) Routes.NOTES_LIST else Routes.LOGIN
+                    navController.navigate(destination) {
+                        popUpTo(Routes.SPLASH) { inclusive = true }
+                    }
+                }
+            )
         }
 
-        composable(Routes.NOTES_LIST) {
+        composable(
+            route = Routes.NOTES_LIST,
+            enterTransition = {
+                if (initialState.destination.route == Routes.SPLASH) {
+                    fadeIn(animationSpec = tween(220))
+                } else {
+                    fadeIn(animationSpec = tween(260)) + slideIntoContainer(
+                        AnimatedContentTransitionScope.SlideDirection.Start,
+                        animationSpec = tween(260)
+                    )
+                }
+            }
+        ) {
             NotesListScreen(
                 viewModel = notesListViewModel,
                 filter = NotesFilter.ALL,
+                isDrawerOpen = isDrawerOpen,
                 onAddNote = {
                     navController.navigate(Routes.noteEdit(null))
+                },
+                onAddChecklistNote = {
+                    navController.navigate(Routes.noteEdit(null, isChecklist = true))
+                },
+                onAddNoteWithImage = { uri ->
+                    navController.navigate(Routes.noteEdit(null, imageUri = uri))
                 },
                 onNoteClick = { noteId ->
                     navController.navigate(Routes.noteEdit(noteId))
@@ -447,8 +546,15 @@ private fun AppNavHost(
             NotesListScreen(
                 viewModel = notesListViewModel,
                 filter = NotesFilter.FAVORITES,
+                isDrawerOpen = isDrawerOpen,
                 onAddNote = {
                     navController.navigate(Routes.noteEdit(null))
+                },
+                onAddChecklistNote = {
+                    navController.navigate(Routes.noteEdit(null, isChecklist = true))
+                },
+                onAddNoteWithImage = { uri ->
+                    navController.navigate(Routes.noteEdit(null, imageUri = uri))
                 },
                 onNoteClick = { noteId ->
                     navController.navigate(Routes.noteEdit(noteId))
@@ -469,7 +575,10 @@ private fun AppNavHost(
             NotesListScreen(
                 viewModel = notesListViewModel,
                 filter = NotesFilter.TRASH,
+                isDrawerOpen = isDrawerOpen,
                 onAddNote = { },
+                onAddChecklistNote = { },
+                onAddNoteWithImage = { },
                 onNoteClick = { },
                 onMenuClick = {
                     scope.launch {
@@ -486,7 +595,16 @@ private fun AppNavHost(
         composable(
             route = Routes.NOTE_EDIT,
             arguments = listOf(
-                navArgument("noteId") { type = NavType.LongType }
+                navArgument("noteId") { type = NavType.LongType },
+                navArgument("checklist") {
+                    type = NavType.BoolType
+                    defaultValue = false
+                },
+                navArgument("imageUri") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                }
             ),
             enterTransition = {
                 // Google Keep style: Elegant container expand from center-scale with cubic-bezier
@@ -561,9 +679,21 @@ private fun AppNavHost(
                 key = "note_edit_${backStackEntry.arguments?.getLong("noteId")}"
             )
             val noteId = backStackEntry.arguments?.getLong("noteId")?.takeIf { it != 0L }
+            val isChecklist = backStackEntry.arguments?.getBoolean("checklist") ?: false
+            val rawImageUri = backStackEntry.arguments?.getString("imageUri")?.takeIf { it.isNotBlank() }
+            val imageUri = if (rawImageUri != null) {
+                try {
+                    java.net.URLDecoder.decode(rawImageUri, "UTF-8")
+                } catch (_: Exception) {
+                    rawImageUri
+                }
+            } else null
+
             NoteEditScreen(
                 noteId = noteId,
                 viewModel = noteEditViewModel,
+                startAsChecklist = isChecklist,
+                initialImageUri = imageUri,
                 onBack = {
                     navController.popBackStack()
                 }

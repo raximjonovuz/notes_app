@@ -60,9 +60,9 @@ android {
         applicationId = "com.raximjonov.smartnotes"
         minSdk = 24
         targetSdk = 37
-        versionCode = 2
+        versionCode = 6
 
-        versionName = "1.0.1"
+        versionName = "1.0.5"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -188,6 +188,9 @@ dependencies {
 
     // Lottie Compose for modern animated illustrations and icons
     implementation(libs.lottie.compose)
+
+    // Google Play In-App Updates (100% bepul rasmiy kutubxona)
+    implementation("com.google.android.play:app-update-ktx:2.1.0")
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

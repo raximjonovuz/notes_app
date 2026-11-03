@@ -5,6 +5,7 @@
     <!-- V3.1: online auth + sync -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!--
         V5.1.4 — image picker. API 33+ (Android 13+) splits media access

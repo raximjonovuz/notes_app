@@ -486,6 +486,43 @@ object StyleRanges {
     }
 
     /**
+     * Precise realignment for a KNOWN edit: [removedLen] characters at
+     * [at] were replaced by [insertedLen] new characters. Unlike
+     * [shiftOnTextChange] this does not diff the texts, so it is safe
+     * for programmatic edits (checklist prefix, quote prefix) where the
+     * inserted text can look like its neighbours.
+     *
+     * Pure insertion: a range that starts exactly at [at] is pushed
+     * right, so the inserted characters are NOT styled.
+     */
+    fun shiftOnEdit(
+        ranges: List<StyleRange>,
+        at: Int,
+        removedLen: Int,
+        insertedLen: Int
+    ): List<StyleRange> {
+        if (ranges.isEmpty()) return ranges
+        val removedEnd = at + removedLen
+        val delta = insertedLen - removedLen
+        fun map(p: Int, isStart: Boolean): Int = when {
+            p < at -> p
+            removedLen == 0 && p == at -> if (isStart) p + delta else p
+            p >= removedEnd -> p + delta
+            else -> at // inside the removed region
+        }
+        val out = mutableListOf<StyleRange>()
+        for (r in ranges) {
+            val isAnchor = r.start == r.end
+            val ns = map(r.start, isStart = true)
+            val ne = if (isAnchor) ns else map(r.end, isStart = false)
+            if (ns < 0 || ne < ns) continue
+            if (!isAnchor && ns == ne) continue
+            out += r.copy(start = ns, end = ne)
+        }
+        return mergeRanges(out)
+    }
+
+    /**
      * Drop anchors (start == end). Anchors are in-memory "active style"
      * markers that should not be persisted.
      */
