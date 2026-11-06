@@ -520,9 +520,19 @@ describe('validateNoteBody (A10)', () => {
         if (!v.ok) expect(v.message).toMatch(/content/);
     });
 
-    it('rejects background_color outside 0..7', () => {
+    it('rejects background_color outside 0..24', () => {
         expect(validateNoteBody({ title: '', content: '', background_color: -1 }).ok).toBe(false);
-        expect(validateNoteBody({ title: '', content: '', background_color: 8 }).ok).toBe(false);
+        expect(validateNoteBody({ title: '', content: '', background_color: 25 }).ok).toBe(false);
+    });
+
+    it('validates and normalizes background_color_key', () => {
+        const v1 = validateNoteBody({ title: '', content: '', background_color_key: 'LAVENDER' });
+        expect(v1.ok).toBe(true);
+        if (v1.ok) expect(v1.value.background_color_key).toBe('lavender');
+
+        const v2 = validateNoteBody({ title: '', content: '', background_color_key: 'invalid key with spaces!' });
+        expect(v2.ok).toBe(true);
+        if (v2.ok) expect(v2.value.background_color_key).toBe('default');
     });
 
     it('keeps updated_at that is within 24h of now', () => {

@@ -1,6 +1,16 @@
 name = "notes-backend"
 main = "src/index.ts"
 compatibility_date = "2025-01-01"
+workers_dev = true
+
+routes = [
+  { pattern = "notes.raximjonov.uz", custom_domain = true }
+]
+
+[assets]
+directory = "../notes-web/dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
 
 [[d1_databases]]
 binding = "DB"

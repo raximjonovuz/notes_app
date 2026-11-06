@@ -23,8 +23,8 @@ export default {
                 return new Response(null, { status: 204, headers: corsHeaders() });
             }
 
-            // Health / root
-            if (path === '/' && method === 'GET') {
+            // Health check
+            if (path === '/health' && method === 'GET') {
                 return new Response('Notes Backend API — v5.3', {
                     headers: { 'Content-Type': 'text/plain', ...corsHeaders() },
                 });
@@ -39,6 +39,19 @@ export default {
             }
             if (path === '/auth/google' && method === 'POST') {
                 return googleAuthRoute(request, env);
+            }
+
+            // If not an API request, let Cloudflare Workers Static Assets serve it (Web App SPA)
+            const isApiRequest = path.startsWith('/notes') || path.startsWith('/auth') || path.startsWith('/upload') || path.startsWith('/files');
+            if (!isApiRequest && env.ASSETS) {
+                return env.ASSETS.fetch(request);
+            }
+
+            // Root fallback if static assets are not bound
+            if (path === '/' && method === 'GET') {
+                return new Response('Notes Backend API — v5.3', {
+                    headers: { 'Content-Type': 'text/plain', ...corsHeaders() },
+                });
             }
 
             // Authenticated routes — bearer token required.
@@ -80,6 +93,10 @@ export default {
             // cross-user existence is never leaked.
             if (path.startsWith('/files/') && method === 'DELETE') {
                 return deleteFile(path, userId, env);
+            }
+
+            if (env.ASSETS && !isApiRequest) {
+                return env.ASSETS.fetch(request);
             }
 
             return errorResponse('Not Found', 404);

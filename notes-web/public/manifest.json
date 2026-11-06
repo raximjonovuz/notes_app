@@ -1,0 +1,16 @@
+{
+  "short_name": "Notes",
+  "name": "Notes - Secure & Synced",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "type": "image/svg+xml",
+      "sizes": "192x192 512x512"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#081C15",
+  "theme_color": "#1B4332",
+  "display": "standalone",
+  "orientation": "portrait-primary"
+}

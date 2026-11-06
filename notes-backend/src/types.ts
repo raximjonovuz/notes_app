@@ -30,6 +30,7 @@ export interface Note {
     is_favorite: number;
     is_trashed: number;
     background_color: number;
+    background_color_key?: string;
 }
 
 export interface Image {
@@ -48,6 +49,7 @@ export interface Env {
     IMAGES: R2Bucket;
     JWT_SECRET: string;
     ENV: string;
+    ASSETS?: Fetcher;
     GOOGLE_CLIENT_ID?: string;
     GOOGLE_CLIENT_SECRET?: string;
 
