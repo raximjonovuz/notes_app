@@ -1,11 +1,17 @@
 {
   "short_name": "Notes",
-  "name": "Notes - Secure & Synced",
+  "name": "Notes — Secure & Synced",
   "icons": [
+    {
+      "src": "/icon-512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    },
     {
       "src": "/favicon.svg",
       "type": "image/svg+xml",
-      "sizes": "192x192 512x512"
+      "sizes": "any"
     }
   ],
   "start_url": "/",
