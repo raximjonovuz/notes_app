@@ -11,7 +11,7 @@ import { LoginModal } from './components/LoginModal';
 import { SettingsModal } from './components/SettingsModal';
 import { AuthEntryScreen } from './components/AuthEntryScreen';
 import type { Note } from './types/note';
-import { Lightbulb, Star, Trash2 } from 'lucide-react';
+import { StickyNote, Star, Trash2 } from 'lucide-react';
 
 function NotesDashboard() {
   const { openLoginModal } = useAuth();
@@ -69,7 +69,7 @@ function NotesDashboard() {
                   ) : activeFilter === 'trash' ? (
                     <Trash2 className="w-24 h-24 stroke-[1]" />
                   ) : (
-                    <Lightbulb className="w-24 h-24 stroke-[1]" />
+                    <StickyNote className="w-24 h-24 stroke-[1]" />
                   )}
                 </div>
                 <p className="text-base font-normal tracking-wide text-[#5f6368] dark:text-[#9aa0a6]">

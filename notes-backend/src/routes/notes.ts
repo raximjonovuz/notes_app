@@ -17,6 +17,22 @@ function toBoolInt(v: any): 0 | 1 {
     return v ? 1 : 0;
 }
 
+export const COLOR_KEYS = [
+    'default', 'yellow', 'blue', 'pink', 'green', 'orange', 'purple', 'red',
+    'teal', 'gray', 'coral', 'peach', 'sand', 'mint', 'emerald', 'sky',
+    'dark_blue', 'lavender', 'rose', 'brown'
+];
+
+export function indexToColorKey(index: number): string {
+    return COLOR_KEYS[index] || 'default';
+}
+
+export function colorKeyToIndex(key?: string): number {
+    if (!key) return 0;
+    const idx = COLOR_KEYS.indexOf(key.toLowerCase());
+    return idx >= 0 ? idx : 0;
+}
+
 /**
  * Map a D1 row to a Note object. server_updated_at =
  * client_updated_at (we keep the client's clock) — BUG 5 fix.
@@ -35,6 +51,8 @@ function toBoolInt(v: any): 0 | 1 {
  */
 function rowToNote(row: any): Note {
     const clientCreated = row.client_created_at ?? 0;
+    const bgIndex = typeof row.background_color === 'number' ? row.background_color : 0;
+    const bgKey = row.background_color_key || indexToColorKey(bgIndex);
     return {
         id: row.id,
         title: row.title ?? '',
@@ -46,8 +64,8 @@ function rowToNote(row: any): Note {
         deleted_at: row.deleted_at || null,
         is_favorite: row.is_favorite ? 1 : 0,
         is_trashed: row.is_trashed ? 1 : 0,
-        background_color: row.background_color ?? 0,
-        background_color_key: row.background_color_key || 'default',
+        background_color: bgIndex,
+        background_color_key: bgKey,
     };
 }
 
@@ -308,7 +326,7 @@ export async function listNotes(request: Request, userId: number, env: Env): Pro
                 ') ' +
                 'SELECT n.id, n.user_id, n.title, n.content, n.created_at, n.updated_at, ' +
                 '       n.client_updated_at, n.client_created_at, n.change_id, n.deleted_at, ' +
-                '       n.is_favorite, n.is_trashed, n.background_color, n.background_color_key, ' +
+                '       n.is_favorite, n.is_trashed, n.background_color, ' +
                 '       p.max_change_id AS log_change_id ' +
                 'FROM per_note p ' +
                 'INNER JOIN notes n ON n.id = p.note_id AND n.user_id = ? ' +
@@ -333,7 +351,7 @@ export async function listNotes(request: Request, userId: number, env: Env): Pro
             .prepare(
                 'SELECT id, user_id, title, content, created_at, updated_at, ' +
                 'client_updated_at, client_created_at, change_id, deleted_at, ' +
-                'is_favorite, is_trashed, background_color, background_color_key ' +
+                'is_favorite, is_trashed, background_color ' +
                 'FROM notes WHERE user_id = ? AND deleted_at IS NULL ' +
                 'ORDER BY change_id ASC LIMIT ?'
             )
@@ -393,7 +411,7 @@ export async function getNote(path: string, userId: number, env: Env): Promise<R
     const row = await env.DB
         .prepare(
             'SELECT id, user_id, title, content, created_at, updated_at, ' +
-            'client_updated_at, change_id, deleted_at, is_favorite, is_trashed, background_color, background_color_key ' +
+            'client_updated_at, change_id, deleted_at, is_favorite, is_trashed, background_color ' +
             'FROM notes WHERE id = ? AND user_id = ?'
         )
         .bind(id, userId)
@@ -470,7 +488,7 @@ export async function upsertNote(request: Request, userId: number, env: Env): Pr
     const existing = await env.DB
         .prepare('SELECT id, user_id, title, content, created_at, updated_at, ' +
                  'client_updated_at, client_created_at, change_id, deleted_at, ' +
-                 'is_favorite, is_trashed, background_color, background_color_key ' +
+                 'is_favorite, is_trashed, background_color ' +
                  'FROM notes WHERE id = ?')
         .bind(id)
         .first<any>();
@@ -525,12 +543,14 @@ export async function upsertNote(request: Request, userId: number, env: Env): Pr
     // A2: all three writes (note upsert, change_log insert, change_id
     // back-fill) are wrapped in a single DB.batch so a partial failure
     // can't leave a change_log row pointing at a stale notes row.
+    const finalBgColor = backgroundColor > 0 ? backgroundColor : colorKeyToIndex(backgroundColorKey);
+
     await env.DB.batch([
         env.DB.prepare(
             `INSERT INTO notes (id, user_id, title, content, created_at, updated_at,
                                 client_created_at, client_updated_at, change_id,
-                                deleted_at, is_favorite, is_trashed, background_color, background_color_key)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?, ?, ?)
+                                deleted_at, is_favorite, is_trashed, background_color)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?, ?)
              ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 content = excluded.content,
@@ -541,15 +561,14 @@ export async function upsertNote(request: Request, userId: number, env: Env): Pr
                 deleted_at = CASE WHEN ? THEN NULL ELSE deleted_at END,
                 is_favorite = excluded.is_favorite,
                 is_trashed = excluded.is_trashed,
-                background_color = excluded.background_color,
-                background_color_key = excluded.background_color_key
+                background_color = excluded.background_color
              WHERE user_id = excluded.user_id`
         ).bind(id, userId, title, content,
                // A4: created_at must come from clientCreated, not
                // clientUpdated — the latter is the modification time.
                clientCreated, clientUpdated,
                clientCreated, clientUpdated,
-               isFavorite, isTrashed, backgroundColor, backgroundColorKey,
+               isFavorite, isTrashed, finalBgColor,
                // A3: 1 to un-delete, 0 to keep the tombstone.
                shouldUndelete ? 1 : 0),
         env.DB.prepare(
@@ -563,7 +582,7 @@ export async function upsertNote(request: Request, userId: number, env: Env): Pr
     const saved = await env.DB
         .prepare(
             'SELECT id, user_id, title, content, created_at, updated_at, ' +
-            'client_updated_at, change_id, deleted_at, is_favorite, is_trashed, background_color, background_color_key ' +
+            'client_updated_at, change_id, deleted_at, is_favorite, is_trashed, background_color ' +
             'FROM notes WHERE id = ? AND user_id = ?'
         )
         .bind(id, userId)

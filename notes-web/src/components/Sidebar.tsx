@@ -1,5 +1,5 @@
 import React from 'react';
-import { Lightbulb, Star, Trash2 } from 'lucide-react';
+import { StickyNote, Star, Trash2 } from 'lucide-react';
 import { useNotes } from '../context/NotesContext';
 import type { NotesFilter } from '../context/NotesContext';
 
@@ -16,7 +16,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onCloseMobile }) => {
   const trashCount = notes.filter((n) => n.is_trashed === 1).length;
 
   const navItems: Array<{ id: NotesFilter; label: string; icon: any; count: number }> = [
-    { id: 'all', label: 'Qaydlar', icon: Lightbulb, count: activeNotesCount },
+    { id: 'all', label: 'Qaydlar', icon: StickyNote, count: activeNotesCount },
     { id: 'favorites', label: 'Sevimlilar', icon: Star, count: favNotesCount },
     { id: 'trash', label: 'Chiqindilar qutisi', icon: Trash2, count: trashCount },
   ];
@@ -53,12 +53,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onCloseMobile }) => {
                   isOpen
                     ? `rounded-r-full pr-6 pl-6 gap-6 ${
                         isActive
-                          ? 'bg-[#feefc3] dark:bg-[#41331c] text-[#202124] dark:text-[#e8eaed] font-medium'
+                          ? 'bg-[#D8F3DC] dark:bg-[#1B4332] text-[#1B4332] dark:text-[#D8F3DC] font-semibold'
                           : 'text-[#202124] dark:text-[#e8eaed] hover:bg-gray-100 dark:hover:bg-[#28292c]'
                       }`
                     : `justify-center ${
                         isActive
-                          ? 'text-[#202124] dark:text-[#e8eaed]'
+                          ? 'text-[#1B4332] dark:text-[#74C69D]'
                           : 'text-[#5f6368] dark:text-[#9aa0a6] hover:bg-gray-100 dark:hover:bg-[#28292c]'
                       }`
                 }`}
@@ -67,14 +67,14 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onCloseMobile }) => {
                 <div
                   className={`flex items-center justify-center shrink-0 ${
                     !isOpen && isActive
-                      ? 'w-12 h-12 rounded-full bg-[#feefc3] dark:bg-[#41331c]'
+                      ? 'w-12 h-12 rounded-full bg-[#D8F3DC] dark:bg-[#1B4332]'
                       : 'w-6 h-6'
                   }`}
                 >
                   <Icon
                     className={`w-5 h-5 ${
                       isActive
-                        ? 'text-[#202124] dark:text-[#e8eaed]'
+                        ? 'text-[#1B4332] dark:text-[#74C69D]'
                         : 'text-[#5f6368] dark:text-[#9aa0a6]'
                     }`}
                   />
@@ -82,9 +82,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onCloseMobile }) => {
 
                 {isOpen && (
                   <div className="flex-1 flex items-center justify-between overflow-hidden">
-                    <span className="text-sm font-medium tracking-normal truncate">{item.label}</span>
+                    <span className="text-sm tracking-normal truncate">{item.label}</span>
                     {item.count > 0 && (
-                      <span className="text-xs px-2 py-0.5 rounded-full bg-black/5 dark:bg-white/10 text-[#5f6368] dark:text-[#9aa0a6] font-normal">
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${
+                        isActive
+                          ? 'bg-[#1B4332]/10 dark:bg-white/20 text-[#1B4332] dark:text-[#D8F3DC] font-medium'
+                          : 'bg-black/5 dark:bg-white/10 text-[#5f6368] dark:text-[#9aa0a6] font-normal'
+                      }`}>
                         {item.count}
                       </span>
                     )}
