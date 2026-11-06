@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { NotesProvider, useNotes } from './context/NotesContext';
 import { ThemeProvider } from './context/ThemeContext';
@@ -7,7 +7,6 @@ import { Sidebar } from './components/Sidebar';
 import { CreateNoteBar } from './components/CreateNoteBar';
 import { NoteCard } from './components/NoteCard';
 import { NoteEditModal } from './components/NoteEditModal';
-import { LoginModal } from './components/LoginModal';
 import { SettingsModal } from './components/SettingsModal';
 import { AuthEntryScreen } from './components/AuthEntryScreen';
 import type { Note } from './types/note';
@@ -20,11 +19,61 @@ function NotesDashboard() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [editingNote, setEditingNote] = useState<Note | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [showExitToast, setShowExitToast] = useState(false);
+
+  const sidebarOpenRef = useRef(sidebarOpen);
+  sidebarOpenRef.current = sidebarOpen;
+  const editingNoteRef = useRef(editingNote);
+  editingNoteRef.current = editingNote;
+  const isSettingsOpenRef = useRef(isSettingsOpen);
+  isSettingsOpenRef.current = isSettingsOpen;
+  const lastBackPressRef = useRef<number>(0);
+
+  // Double-tap back button to exit web app (Android / PWA behavior)
+  useEffect(() => {
+    window.history.pushState({ app: 'notes' }, '');
+
+    const handlePopState = () => {
+      // 1. If note modal is open, close it first
+      if (editingNoteRef.current) {
+        setEditingNote(null);
+        window.history.pushState({ app: 'notes' }, '');
+        return;
+      }
+      // 2. If settings modal is open, close it
+      if (isSettingsOpenRef.current) {
+        setIsSettingsOpen(false);
+        window.history.pushState({ app: 'notes' }, '');
+        return;
+      }
+      // 3. If sidebar is open, close it
+      if (sidebarOpenRef.current) {
+        setSidebarOpen(false);
+        window.history.pushState({ app: 'notes' }, '');
+        return;
+      }
+
+      // 4. Double back to exit
+      const now = Date.now();
+      if (now - lastBackPressRef.current < 2000) {
+        // Second press within 2s -> Allow back exit
+        window.history.back();
+      } else {
+        lastBackPressRef.current = now;
+        window.history.pushState({ app: 'notes' }, '');
+        setShowExitToast(true);
+        setTimeout(() => setShowExitToast(false), 2000);
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
 
   const gridClass =
     viewMode === 'grid'
-      ? 'columns-1 sm:columns-2 md:columns-3 lg:columns-4 xl:columns-5 2xl:columns-6 gap-4'
-      : 'flex flex-col gap-3 max-w-[600px] mx-auto';
+      ? 'columns-2 sm:columns-2 md:columns-3 lg:columns-4 xl:columns-5 2xl:columns-6 gap-2 sm:gap-4'
+      : 'flex flex-col gap-2 sm:gap-3 max-w-[600px] mx-auto';
 
   return (
     <div className="min-h-screen bg-white dark:bg-[#202124] text-[#202124] dark:text-[#e8eaed] flex flex-col transition-colors">
@@ -40,7 +89,7 @@ function NotesDashboard() {
           onCloseMobile={() => setSidebarOpen(false)}
         />
 
-        <main className="flex-1 px-4 sm:px-8 py-2 overflow-x-hidden flex flex-col items-center">
+        <main className="flex-1 px-2 sm:px-8 py-2 overflow-x-hidden flex flex-col items-center">
           {/* Create Note Bar (Google Keep style) */}
           {activeFilter === 'all' && <CreateNoteBar />}
 
@@ -81,11 +130,11 @@ function NotesDashboard() {
                 </p>
               </div>
             ) : (
-              <div className="flex flex-col gap-6">
+              <div className="flex flex-col gap-4 sm:gap-6">
                 {/* Pinned notes section */}
                 {activeFilter === 'all' && pinnedNotes.length > 0 && (
                   <div>
-                    <h4 className="text-[11px] font-medium uppercase tracking-wider text-[#5f6368] dark:text-[#9aa0a6] mb-2 px-3 select-none">
+                    <h4 className="text-[11px] font-medium uppercase tracking-wider text-[#5f6368] dark:text-[#9aa0a6] mb-2 px-2 select-none">
                       QADALGAN
                     </h4>
                     <div className={gridClass}>
@@ -103,7 +152,7 @@ function NotesDashboard() {
                 {/* Other notes section */}
                 <div>
                   {activeFilter === 'all' && pinnedNotes.length > 0 && (
-                    <h4 className="text-[11px] font-medium uppercase tracking-wider text-[#5f6368] dark:text-[#9aa0a6] mb-2 px-3 select-none">
+                    <h4 className="text-[11px] font-medium uppercase tracking-wider text-[#5f6368] dark:text-[#9aa0a6] mb-2 px-2 select-none">
                       BOSHQALAR
                     </h4>
                   )}
@@ -135,14 +184,18 @@ function NotesDashboard() {
         onClose={() => setIsSettingsOpen(false)}
       />
 
-      {/* Login Modal */}
-      <LoginModal />
+      {/* Double back exit toast */}
+      {showExitToast && (
+        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-50 bg-[#1B4332] text-white text-xs sm:text-sm font-medium px-4 py-2.5 rounded-full shadow-2xl border border-[#74C69D]/40 animate-in fade-in slide-in-from-bottom-2 duration-150 flex items-center gap-2 pointer-events-none select-none">
+          <span>Chiqish uchun yana bir marta bosing</span>
+        </div>
+      )}
     </div>
   );
 }
 
 function MainRoot() {
-  const { isSplashPhase, isLoading } = useAuth();
+  const { isLoading, isAuthenticated, user } = useAuth();
 
   if (isLoading) {
     return (
@@ -152,7 +205,8 @@ function MainRoot() {
     );
   }
 
-  if (isSplashPhase) {
+  // Strictly block entry if not logged in with Google (No guest mode)
+  if (!isAuthenticated || !user) {
     return <AuthEntryScreen />;
   }
 

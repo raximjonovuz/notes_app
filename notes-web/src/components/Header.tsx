@@ -37,47 +37,47 @@ export const Header: React.FC<HeaderProps> = ({
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
 
   return (
-    <header className="sticky top-0 z-40 bg-white dark:bg-[#202124] border-b border-[#e0e0e0] dark:border-[#5f6368]/60 px-2 sm:px-4 h-16 flex items-center justify-between gap-2 sm:gap-4 transition-colors select-none">
+    <header className="sticky top-0 z-40 bg-white dark:bg-[#202124] border-b border-[#e0e0e0] dark:border-[#5f6368]/60 px-2 sm:px-4 h-14 sm:h-16 flex items-center justify-between gap-1 sm:gap-4 transition-colors select-none">
       {/* Left: Hamburger & Google Keep style Notes brand */}
-      <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+      <div className="flex items-center gap-0.5 sm:gap-2 shrink-0">
         <button
           onClick={onToggleSidebar}
-          className="w-12 h-12 rounded-full hover:bg-gray-100 dark:hover:bg-white/10 text-[#5f6368] dark:text-[#e8eaed] flex items-center justify-center transition-colors cursor-pointer"
+          className="w-10 h-10 sm:w-12 sm:h-12 rounded-full hover:bg-gray-100 dark:hover:bg-white/10 text-[#5f6368] dark:text-[#e8eaed] flex items-center justify-center transition-colors cursor-pointer"
           title="Asosiy menyu"
         >
-          <Menu className="w-6 h-6" />
+          <Menu className="w-5 h-5 sm:w-6 sm:h-6" />
         </button>
 
-        <div className="flex items-center gap-2 cursor-pointer pr-4">
-          <NotesLogo size={34} animated />
-          <span className="text-[22px] font-normal tracking-tight text-[#5f6368] dark:text-[#e8eaed]">
+        <div className="flex items-center gap-2 cursor-pointer pr-1 sm:pr-4">
+          <NotesLogo size={32} animated />
+          <span className="hidden md:inline text-[22px] font-normal tracking-tight text-[#5f6368] dark:text-[#e8eaed]">
             Notes
           </span>
         </div>
       </div>
 
-      {/* Center: Search Bar (Google Keep 8px rounded container) */}
-      <div className="flex-1 max-w-[720px] relative mx-1 sm:mx-2">
+      {/* Center: Search Bar (Google Keep style full-width container) */}
+      <div className="flex-1 max-w-[720px] relative mx-1 sm:mx-3">
         <div className="relative flex items-center group">
           <button
             type="button"
-            className="w-10 h-10 flex items-center justify-center absolute left-1 text-[#5f6368] dark:text-[#9aa0a6] pointer-events-none"
+            className="w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center absolute left-1 text-[#5f6368] dark:text-[#9aa0a6] pointer-events-none"
           >
-            <Search className="w-5 h-5" />
+            <Search className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Qidirish"
-            className="w-full h-11 sm:h-12 pl-12 pr-10 bg-[#f1f3f4] dark:bg-[#525355]/30 focus:bg-white dark:focus:bg-[#202124] text-[#202124] dark:text-[#e8eaed] placeholder-[#5f6368] dark:placeholder-[#9aa0a6] rounded-lg focus:shadow-[0_1px_1px_0_rgba(65,69,73,0.3),0_1px_3px_1px_rgba(65,69,73,0.15)] focus:outline-none transition-all text-sm sm:text-base border border-transparent focus:border-transparent"
+            placeholder="Qidirish..."
+            className="w-full h-10 sm:h-12 pl-9 sm:pl-12 pr-8 sm:pr-10 bg-[#f1f3f4] dark:bg-[#525355]/30 focus:bg-white dark:focus:bg-[#202124] text-[#202124] dark:text-[#e8eaed] placeholder-[#5f6368] dark:placeholder-[#9aa0a6] rounded-lg focus:shadow-[0_1px_1px_0_rgba(65,69,73,0.3),0_1px_3px_1px_rgba(65,69,73,0.15)] focus:outline-none transition-all text-xs sm:text-base border border-transparent focus:border-transparent"
           />
           {searchQuery && (
             <button
               onClick={() => setSearchQuery('')}
-              className="w-8 h-8 rounded-full flex items-center justify-center absolute right-2 text-[#5f6368] dark:text-[#9aa0a6] hover:bg-gray-200 dark:hover:bg-white/10 cursor-pointer"
+              className="w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center absolute right-2 text-[#5f6368] dark:text-[#9aa0a6] hover:bg-gray-200 dark:hover:bg-white/10 cursor-pointer"
             >
-              <X className="w-4 h-4" />
+              <X className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
             </button>
           )}
         </div>

@@ -108,7 +108,7 @@ export const CreateNoteBar: React.FC = () => {
   const cardBorder = isDark ? colorToken.borderDark : colorToken.borderLight;
 
   return (
-    <div className="w-full max-w-[600px] mx-auto mt-6 mb-8 px-4 select-none">
+    <div className="w-full max-w-[600px] mx-auto mt-2 sm:mt-6 mb-3 sm:mb-8 px-1 sm:px-4 select-none">
       <div
         ref={containerRef}
         style={{
@@ -117,7 +117,7 @@ export const CreateNoteBar: React.FC = () => {
         }}
         className={`rounded-lg transition-all duration-200 border ${
           !isExpanded
-            ? 'h-[46px] bg-white dark:bg-[#202124] border-gray-200/90 dark:border-[#5f6368] shadow-[0_1px_2px_0_rgba(60,64,67,0.3),0_2px_6px_2px_rgba(60,64,67,0.15)] dark:shadow-none cursor-text'
+            ? 'h-[42px] sm:h-[46px] bg-white dark:bg-[#202124] border-gray-200/90 dark:border-[#5f6368] shadow-[0_1px_2px_0_rgba(60,64,67,0.3),0_2px_6px_2px_rgba(60,64,67,0.15)] dark:shadow-none cursor-text'
             : 'bg-white dark:bg-[#202124] border-gray-200/90 dark:border-[#5f6368] shadow-[0_1px_3px_0_rgba(60,64,67,0.3),0_4px_8px_3px_rgba(60,64,67,0.15)] dark:shadow-none'
         }`}
       >
@@ -125,9 +125,9 @@ export const CreateNoteBar: React.FC = () => {
           // Collapsed Bar (Keep style 1:1)
           <div
             onClick={() => setIsExpanded(true)}
-            className="h-full flex items-center justify-between px-4 text-[#5f6368] dark:text-[#9aa0a6]"
+            className="h-full flex items-center justify-between px-3 sm:px-4 text-[#5f6368] dark:text-[#9aa0a6]"
           >
-            <span className="font-medium text-sm sm:text-base">Qayd yozish...</span>
+            <span className="font-normal text-xs sm:text-base">Qayd yozish...</span>
             <div className="flex items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
               <button
                 type="button"
@@ -136,9 +136,9 @@ export const CreateNoteBar: React.FC = () => {
                   setIsChecklistMode(true);
                 }}
                 title="Yangi ro'yxat"
-                className="w-10 h-10 rounded-full hover:bg-gray-100 dark:hover:bg-white/10 text-[#5f6368] dark:text-[#9aa0a6] flex items-center justify-center transition-colors cursor-pointer"
+                className="w-8 h-8 sm:w-10 sm:h-10 rounded-full hover:bg-gray-100 dark:hover:bg-white/10 text-[#5f6368] dark:text-[#9aa0a6] flex items-center justify-center transition-colors cursor-pointer"
               >
-                <CheckSquare className="w-5 h-5" />
+                <CheckSquare className="w-4 h-4 sm:w-5 sm:h-5" />
               </button>
               <button
                 type="button"
@@ -146,9 +146,9 @@ export const CreateNoteBar: React.FC = () => {
                   setIsExpanded(true);
                 }}
                 title="Rasm chizish"
-                className="w-10 h-10 rounded-full hover:bg-gray-100 dark:hover:bg-white/10 text-[#5f6368] dark:text-[#9aa0a6] hidden sm:flex items-center justify-center transition-colors cursor-pointer"
+                className="w-8 h-8 sm:w-10 sm:h-10 rounded-full hover:bg-gray-100 dark:hover:bg-white/10 text-[#5f6368] dark:text-[#9aa0a6] hidden sm:flex items-center justify-center transition-colors cursor-pointer"
               >
-                <PenTool className="w-5 h-5" />
+                <PenTool className="w-4 h-4 sm:w-5 sm:h-5" />
               </button>
               <button
                 type="button"
@@ -157,9 +157,9 @@ export const CreateNoteBar: React.FC = () => {
                   fileInputRef.current?.click();
                 }}
                 title="Rasm qo'shish"
-                className="w-10 h-10 rounded-full hover:bg-gray-100 dark:hover:bg-white/10 text-[#5f6368] dark:text-[#9aa0a6] flex items-center justify-center transition-colors cursor-pointer"
+                className="w-8 h-8 sm:w-10 sm:h-10 rounded-full hover:bg-gray-100 dark:hover:bg-white/10 text-[#5f6368] dark:text-[#9aa0a6] flex items-center justify-center transition-colors cursor-pointer"
               >
-                <ImageIcon className="w-5 h-5" />
+                <ImageIcon className="w-4 h-4 sm:w-5 sm:h-5" />
               </button>
             </div>
           </div>

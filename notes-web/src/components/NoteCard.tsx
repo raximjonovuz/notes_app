@@ -46,15 +46,15 @@ export const NoteCard: React.FC<NoteCardProps> = ({ note, onEdit }) => {
         backgroundColor: cardBg,
         borderColor: cardBorder,
       }}
-      className={`group relative rounded-lg border p-4 transition-all duration-150 hover:shadow-[0_1px_2px_0_rgba(60,64,67,0.3),0_2px_6px_2px_rgba(60,64,67,0.15)] flex flex-col justify-between break-inside-avoid select-none mb-4 cursor-pointer text-[#202124] dark:text-[#e8eaed] ${
+      className={`group relative rounded-xl sm:rounded-lg border p-3 sm:p-4 transition-all duration-150 hover:shadow-[0_1px_2px_0_rgba(60,64,67,0.3),0_2px_6px_2px_rgba(60,64,67,0.15)] flex flex-col justify-between break-inside-avoid select-none mb-2 sm:mb-4 cursor-pointer text-[#202124] dark:text-[#e8eaed] ${
         isTrashed ? 'opacity-70 cursor-default' : ''
       }`}
     >
       {/* Top Header: Title & Pin/Favorite */}
       <div>
-        <div className="flex items-start justify-between gap-2 mb-2">
+        <div className="flex items-start justify-between gap-1 sm:gap-2 mb-1.5 sm:mb-2">
           {note.title ? (
-            <h3 className="font-medium text-base text-[#202124] dark:text-[#e8eaed] leading-snug line-clamp-2">
+            <h3 className="font-medium text-sm sm:text-base text-[#202124] dark:text-[#e8eaed] leading-snug line-clamp-2">
               {note.title}
             </h3>
           ) : (
@@ -62,7 +62,7 @@ export const NoteCard: React.FC<NoteCardProps> = ({ note, onEdit }) => {
           )}
 
           {!isTrashed && (
-            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            <div className="flex items-center gap-0.5 opacity-70 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity shrink-0">
               <button
                 type="button"
                 onClick={(e) => {
@@ -70,10 +70,10 @@ export const NoteCard: React.FC<NoteCardProps> = ({ note, onEdit }) => {
                   toggleFavorite(note.id);
                 }}
                 title={note.is_favorite ? 'Sevimlilardan chiqarish' : 'Sevimli qilish'}
-                className="w-8 h-8 rounded-full hover:bg-black/5 dark:hover:bg-white/10 text-[#5f6368] dark:text-[#9aa0a6] flex items-center justify-center cursor-pointer"
+                className="w-7 h-7 sm:w-8 sm:h-8 rounded-full hover:bg-black/5 dark:hover:bg-white/10 text-[#5f6368] dark:text-[#9aa0a6] flex items-center justify-center cursor-pointer"
               >
                 <Star
-                  className={`w-4 h-4 ${
+                  className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${
                     note.is_favorite ? 'fill-amber-400 text-amber-500' : ''
                   }`}
                 />
@@ -86,11 +86,11 @@ export const NoteCard: React.FC<NoteCardProps> = ({ note, onEdit }) => {
                   togglePin(note.id);
                 }}
                 title={note.isPinned ? 'Qadashni bekor qilish' : 'Tepaga qadash (Pin)'}
-                className={`w-8 h-8 rounded-full hover:bg-black/5 dark:hover:bg-white/10 flex items-center justify-center cursor-pointer ${
+                className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full hover:bg-black/5 dark:hover:bg-white/10 flex items-center justify-center cursor-pointer ${
                   note.isPinned ? 'text-[#202124] dark:text-[#e8eaed]' : 'text-[#5f6368] dark:text-[#9aa0a6]'
                 }`}
               >
-                <Pin className={`w-4 h-4 ${note.isPinned ? 'fill-current' : ''}`} />
+                <Pin className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${note.isPinned ? 'fill-current' : ''}`} />
               </button>
             </div>
           )}
@@ -98,11 +98,11 @@ export const NoteCard: React.FC<NoteCardProps> = ({ note, onEdit }) => {
 
         {/* Attached Images */}
         {parsed.images.length > 0 && (
-          <div className="mb-3 rounded-md overflow-hidden border border-black/5 dark:border-white/5">
+          <div className="mb-2 sm:mb-3 rounded-md overflow-hidden border border-black/5 dark:border-white/5">
             <img
               src={parsed.images[0]}
               alt="attachment"
-              className="w-full max-h-48 object-cover"
+              className="w-full max-h-36 sm:max-h-48 object-cover"
               loading="lazy"
             />
           </div>
@@ -110,7 +110,7 @@ export const NoteCard: React.FC<NoteCardProps> = ({ note, onEdit }) => {
 
         {/* Note Body Text */}
         {parsed.displayText && (
-          <p className="text-sm text-[#202124] dark:text-[#e8eaed] whitespace-pre-wrap line-clamp-8 leading-relaxed mb-3">
+          <p className="text-xs sm:text-sm text-[#202124] dark:text-[#e8eaed] whitespace-pre-wrap line-clamp-5 sm:line-clamp-8 leading-relaxed mb-2 sm:mb-3">
             {parsed.displayText}
           </p>
         )}
@@ -141,7 +141,7 @@ export const NoteCard: React.FC<NoteCardProps> = ({ note, onEdit }) => {
       </div>
 
       {/* Card Action Footer */}
-      <div className="flex items-center justify-between pt-2 mt-2 opacity-0 group-hover:opacity-100 transition-opacity">
+      <div className="flex items-center justify-between pt-1 sm:pt-2 mt-1 sm:mt-2 opacity-70 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
         {!isTrashed ? (
           <div className="flex items-center gap-1 relative">
             {/* Color Palette */}

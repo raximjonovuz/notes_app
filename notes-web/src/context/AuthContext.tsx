@@ -6,8 +6,6 @@ import {
   getStoredUser,
   clearAuthSession,
   isSessionExpired,
-  isGuestOnboarded,
-  setGuestOnboarded,
 } from '../services/storage';
 
 export const GOOGLE_CLIENT_ID = '506282696730-jmrbedtsp0ce2onj5q5uo5hcg8k89lo6.apps.googleusercontent.com';
@@ -15,12 +13,9 @@ export const GOOGLE_CLIENT_ID = '506282696730-jmrbedtsp0ce2onj5q5uo5hcg8k89lo6.a
 interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
-  isGuest: boolean;
   isLoading: boolean;
-  isSplashPhase: boolean;
   error: string | null;
   loginWithGoogle: (idToken: string) => Promise<void>;
-  continueAsGuest: () => void;
   openLoginModal: () => void;
   closeLoginModal: () => void;
   isLoginModalOpen: boolean;
@@ -32,15 +27,9 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(getStoredUser());
-  const [isGuest, setIsGuest] = useState<boolean>(() => !getStoredUser() && isGuestOnboarded());
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [isLoginModalOpen, setIsLoginModalOpen] = useState<boolean>(false);
-
-  // Splash/Entry screen shown if user is neither authenticated nor opted into guest mode
-  const [isSplashPhase, setIsSplashPhase] = useState<boolean>(() => {
-    return !getStoredUser() && !isGuestOnboarded();
-  });
 
   const clearError = useCallback(() => setError(null), []);
 
@@ -52,7 +41,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const handleUnauthorized = () => {
       clearAuthSession();
       setUser(null);
-      setIsGuest(true);
       setError('Sessiya muddati tugadi. Qaytadan kiring.');
     };
     window.addEventListener('notes:unauthorized', handleUnauthorized);
@@ -65,7 +53,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (getStoredToken() && isSessionExpired()) {
         clearAuthSession();
         setUser(null);
-        setIsGuest(true);
         setError('3 kunlik faolsizlik sababli tizimdan chiqildi.');
       }
     };
@@ -97,12 +84,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         const currentUser = await api.getMe();
         setUser(currentUser);
-        setIsGuest(false);
-        setIsSplashPhase(false);
       } catch {
         clearAuthSession();
         setUser(null);
-        setIsGuest(isGuestOnboarded());
       } finally {
         setIsLoading(false);
       }
@@ -116,9 +100,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const res = await api.loginGoogle(idToken);
       setUser(res.user);
-      setIsGuest(false);
-      setIsSplashPhase(false);
-      setGuestOnboarded(true);
       closeLoginModal();
     } catch (e: any) {
       setError(e.message || 'Google orqali kirishda xatolik yuz berdi.');
@@ -126,13 +107,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } finally {
       setIsLoading(false);
     }
-  };
-
-  const continueAsGuest = () => {
-    setGuestOnboarded(true);
-    setIsGuest(true);
-    setIsSplashPhase(false);
-    closeLoginModal();
   };
 
   const logout = async () => {
@@ -144,8 +118,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } finally {
       clearAuthSession();
       setUser(null);
-      setIsGuest(true);
-      setIsSplashPhase(false);
       setIsLoading(false);
     }
   };
@@ -155,12 +127,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       value={{
         user,
         isAuthenticated: !!user,
-        isGuest,
         isLoading,
-        isSplashPhase,
         error,
         loginWithGoogle,
-        continueAsGuest,
         openLoginModal,
         closeLoginModal,
         isLoginModalOpen,
