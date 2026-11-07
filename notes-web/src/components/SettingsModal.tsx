@@ -118,8 +118,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
                 </p>
                 <p>
                   {isAuthenticated && user
-                    ? `Faol hisob: ${user.email}. Oxirgi faollikdan keyin 3 kun davomida kirmasangiz, sessiya avtomatik tozalanadi.`
-                    : "Siz mehmon rejimidamisiz. Qaydlaringiz qurilma xotirasida saqlanadi."}
+                    ? `Faol hisob: ${user.email}. Oxirgi faollikdan keyin 3 kun davomida kirmasangiz, sessiya xavfsizlik uchun tozalanadi.`
+                    : "Qaydlaringiz xavfsiz shifrlangan holatda saqlanadi."}
                 </p>
               </div>
             </div>
@@ -127,21 +127,31 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-2 px-6 py-4 bg-gray-50 dark:bg-[#303134]/50 border-t border-gray-100 dark:border-[#3c4043]">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-200/60 dark:hover:bg-white/10 rounded-lg transition-colors cursor-pointer"
+        <div className="flex items-center justify-between px-6 py-4 bg-gray-50 dark:bg-[#303134]/50 border-t border-gray-100 dark:border-[#3c4043]">
+          <a
+            href="https://raximjonov.uz"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[11px] text-[#80868b] dark:text-[#9aa0a6] hover:text-[#2D6A4F] dark:hover:text-[#74C69D] hover:underline transition-colors tracking-wide"
           >
-            Bekor qilish
-          </button>
-          <button
-            type="button"
-            onClick={handleSave}
-            className="px-5 py-2 text-sm font-medium text-white bg-[#2D6A4F] hover:bg-[#1B4332] active:scale-95 rounded-lg shadow-xs transition-all cursor-pointer"
-          >
-            Saqlash
-          </button>
+            raximjonov.uz
+          </a>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-200/60 dark:hover:bg-white/10 rounded-lg transition-colors cursor-pointer"
+            >
+              Bekor qilish
+            </button>
+            <button
+              type="button"
+              onClick={handleSave}
+              className="px-5 py-2 text-sm font-medium text-white bg-[#2D6A4F] hover:bg-[#1B4332] active:scale-95 rounded-lg shadow-xs transition-all cursor-pointer"
+            >
+              Saqlash
+            </button>
+          </div>
         </div>
       </div>
     </div>

@@ -131,9 +131,17 @@ export const AuthEntryScreen: React.FC = () => {
           <Shield className="w-4 h-4 text-[#40916C]" />
           <span>Shaxsiy va xavfsiz shifrlangan</span>
         </div>
-        <p className="text-[11px] leading-tight text-[#8E919A]">
+        <p className="text-[11px] leading-tight text-[#8E919A] mb-3">
           Qaydlaringiz faqat sizning hisobingizga tegishli va doimiy zaxiralanadi.
         </p>
+        <a
+          href="https://raximjonov.uz"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-[11px] text-[#8E919A]/60 hover:text-[#2D6A4F] transition-colors tracking-wide"
+        >
+          raximjonov.uz
+        </a>
       </div>
     </div>
   );

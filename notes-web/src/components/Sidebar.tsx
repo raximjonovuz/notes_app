@@ -99,12 +99,21 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onCloseMobile }) => {
           })}
         </div>
 
-        {/* Footer info in sidebar */}
-        {isOpen && (
-          <div className="px-6 py-4 text-[11px] text-[#80868b] dark:text-[#9aa0a6]">
-            <p>Ochiq kodli litsenziyalar</p>
-          </div>
-        )}
+        {/* Footer developer signature */}
+        <div className="px-6 py-3 text-[11px] text-[#80868b] dark:text-[#9aa0a6] select-none">
+          {isOpen ? (
+            <a
+              href="https://raximjonov.uz"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[#80868b]/80 dark:text-[#9aa0a6]/80 hover:text-[#2D6A4F] dark:hover:text-[#74C69D] hover:underline transition-colors tracking-wide font-normal"
+            >
+              raximjonov.uz
+            </a>
+          ) : (
+            <span className="hidden">raximjonov.uz</span>
+          )}
+        </div>
       </aside>
     </>
   );
