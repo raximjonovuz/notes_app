@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { getColorToken } from '../types/note';
 import type { Note, NoteColorKey } from '../types/note';
 import { useNotes } from '../context/NotesContext';
@@ -33,13 +33,41 @@ export const NoteEditModal: React.FC<NoteEditModalProps> = ({ note, onClose }) =
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [images, setImages] = useState<string[]>(parsed.images);
   const [isUploading, setIsUploading] = useState(false);
+  const [pendingFocus, setPendingFocus] = useState<{ index: number; cursorPosition: number } | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const titleRef = useRef<HTMLInputElement>(null);
+  const itemRefs = useRef<(HTMLInputElement | null)[]>([]);
+  const newItemInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Manage focus transitions after checklist state updates
+  useEffect(() => {
+    if (pendingFocus) {
+      const el = itemRefs.current[pendingFocus.index];
+      if (el) {
+        el.focus();
+        el.setSelectionRange(pendingFocus.cursorPosition, pendingFocus.cursorPosition);
+      }
+      setPendingFocus(null);
+    }
+  }, [checklists, pendingFocus]);
 
   const handleSaveAndClose = async () => {
+    let finalChecklists = [...checklists];
+    if (newChecklistText.trim()) {
+      finalChecklists.push({
+        id: `chk_${Date.now()}`,
+        text: newChecklistText.trim(),
+        checked: false,
+      });
+    }
+    // Clean up empty checklist items
+    finalChecklists = finalChecklists.filter((item) => item.text.trim().length > 0);
+
     let finalContent = content;
     if (isChecklistMode || images.length > 0) {
-      finalContent = buildV3Content(content, checklists, images);
+      finalContent = buildV3Content(content, finalChecklists, images);
     }
 
     await editNote(note.id, {
@@ -66,9 +94,175 @@ export const NoteEditModal: React.FC<NoteEditModalProps> = ({ note, onClose }) =
     if (!newChecklistText.trim()) return;
     setChecklists((prev) => [
       ...prev,
-      { id: `chk_${Date.now()}`, text: newChecklistText.trim(), checked: false },
+      { id: `chk_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`, text: newChecklistText.trim(), checked: false },
     ]);
     setNewChecklistText('');
+  };
+
+  // Keyboard navigation for existing checklist items
+  const handleItemKeyDown = (
+    e: React.KeyboardEvent<HTMLInputElement>,
+    idx: number
+  ) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const input = e.currentTarget;
+      const start = input.selectionStart ?? input.value.length;
+      const end = input.selectionEnd ?? input.value.length;
+
+      const currentText = checklists[idx].text;
+      const leftText = currentText.slice(0, start);
+      const rightText = currentText.slice(end);
+
+      const newItem: ChecklistItem = {
+        id: `chk_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        text: rightText,
+        checked: false,
+      };
+
+      const nextChecklists = [...checklists];
+      nextChecklists[idx] = { ...nextChecklists[idx], text: leftText };
+      nextChecklists.splice(idx + 1, 0, newItem);
+
+      setChecklists(nextChecklists);
+      setPendingFocus({ index: idx + 1, cursorPosition: 0 });
+    } else if (e.key === 'Backspace') {
+      const input = e.currentTarget;
+      const start = input.selectionStart ?? 0;
+      const end = input.selectionEnd ?? 0;
+
+      if (!checklists[idx].text) {
+        // Current item is completely empty
+        e.preventDefault();
+        const nextChecklists = checklists.filter((_, i) => i !== idx);
+        setChecklists(nextChecklists);
+
+        if (idx > 0) {
+          const prevLen = checklists[idx - 1].text.length;
+          setPendingFocus({ index: idx - 1, cursorPosition: prevLen });
+        } else if (nextChecklists.length > 0) {
+          setPendingFocus({ index: 0, cursorPosition: 0 });
+        } else {
+          titleRef.current?.focus();
+        }
+      } else if (start === 0 && end === 0 && idx > 0) {
+        // Cursor at very start of non-empty item: merge into previous item
+        e.preventDefault();
+        const prevText = checklists[idx - 1].text;
+        const prevLen = prevText.length;
+        const mergedText = prevText + checklists[idx].text;
+
+        const nextChecklists = [...checklists];
+        nextChecklists[idx - 1] = { ...nextChecklists[idx - 1], text: mergedText };
+        nextChecklists.splice(idx, 1);
+
+        setChecklists(nextChecklists);
+        setPendingFocus({ index: idx - 1, cursorPosition: prevLen });
+      }
+    } else if (e.key === 'ArrowDown') {
+      const input = e.currentTarget;
+      const pos = input.selectionStart ?? 0;
+      if (pos === input.value.length || e.ctrlKey || e.altKey) {
+        if (idx < checklists.length - 1) {
+          e.preventDefault();
+          itemRefs.current[idx + 1]?.focus();
+        } else if (newItemInputRef.current) {
+          e.preventDefault();
+          newItemInputRef.current.focus();
+        }
+      }
+    } else if (e.key === 'ArrowUp') {
+      const input = e.currentTarget;
+      const pos = input.selectionStart ?? 0;
+      if (pos === 0 || e.ctrlKey || e.altKey) {
+        if (idx > 0) {
+          e.preventDefault();
+          itemRefs.current[idx - 1]?.focus();
+        } else if (titleRef.current) {
+          e.preventDefault();
+          titleRef.current.focus();
+        }
+      }
+    }
+  };
+
+  // Keyboard navigation for the "Add checklist item" field
+  const handleNewChecklistKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (newChecklistText.trim()) {
+        const newItem: ChecklistItem = {
+          id: `chk_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          text: newChecklistText.trim(),
+          checked: false,
+        };
+        setChecklists((prev) => [...prev, newItem]);
+        setNewChecklistText('');
+      }
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (checklists.length > 0) {
+        itemRefs.current[checklists.length - 1]?.focus();
+      } else {
+        titleRef.current?.focus();
+      }
+    } else if (e.key === 'Backspace' && !newChecklistText) {
+      if (checklists.length > 0) {
+        e.preventDefault();
+        const lastIdx = checklists.length - 1;
+        const lastLen = checklists[lastIdx].text.length;
+        setPendingFocus({ index: lastIdx, cursorPosition: lastLen });
+      }
+    }
+  };
+
+  // Title keyboard navigation
+  const handleTitleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (isChecklistMode) {
+        if (checklists.length > 0) {
+          itemRefs.current[0]?.focus();
+        } else {
+          newItemInputRef.current?.focus();
+        }
+      } else {
+        textareaRef.current?.focus();
+      }
+    }
+  };
+
+  // Textarea keyboard navigation
+  const handleTextareaKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'ArrowUp' && e.currentTarget.selectionStart === 0 && e.currentTarget.selectionEnd === 0) {
+      e.preventDefault();
+      titleRef.current?.focus();
+    }
+  };
+
+  // Toggle between Checklist Mode and Plain Text Mode safely without losing data
+  const handleToggleChecklistMode = () => {
+    if (isChecklistMode) {
+      // Checklist -> Plain text
+      const listLines = checklists.map((c) => c.text);
+      const combined = [content, ...listLines].filter((s) => s.trim().length > 0).join('\n');
+      setContent(combined);
+      setChecklists([]);
+      setIsChecklistMode(false);
+    } else {
+      // Plain text -> Checklist
+      const lines = content.split('\n').filter((l) => l.trim().length > 0);
+      if (lines.length > 0) {
+        const newItems: ChecklistItem[] = lines.map((line, idx) => ({
+          id: `chk_${Date.now()}_${idx}`,
+          text: line.replace(/^[-*•]\s?(\[[ xX]\]\s?)?/, '').replace(/^\d+[\.\)]\s?/, ''),
+          checked: false,
+        }));
+        setChecklists(newItems);
+      }
+      setContent('');
+      setIsChecklistMode(true);
+    }
   };
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -118,11 +312,13 @@ export const NoteEditModal: React.FC<NoteEditModalProps> = ({ note, onClose }) =
         {/* Header: Title & Pin/Favorite */}
         <div className="p-4 sm:p-5 pb-2 flex items-center justify-between gap-3">
           <input
+            ref={titleRef}
             type="text"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
+            onKeyDown={handleTitleKeyDown}
             placeholder="Sarlavha"
-            className="w-full font-medium text-base sm:text-lg bg-transparent border-none outline-none text-[#202124] dark:text-[#e8eaed] placeholder-[#5f6368] dark:placeholder-[#9aa0a6]"
+            className="w-full font-medium text-base sm:text-lg bg-transparent border-none outline-none text-[#202124] dark:text-[#e8eaed] placeholder-[#5f6368] dark:placeholder-[#9aa0a6] select-text"
           />
 
           <div className="flex items-center gap-1">
@@ -174,14 +370,17 @@ export const NoteEditModal: React.FC<NoteEditModalProps> = ({ note, onClose }) =
           {isChecklistMode ? (
             <div className="flex flex-col gap-2.5 my-1">
               {checklists.map((chk, idx) => (
-                <div key={chk.id} className="flex items-center gap-2.5 text-sm sm:text-base">
+                <div key={chk.id} className="flex items-center gap-2.5 text-sm sm:text-base group">
                   <input
                     type="checkbox"
                     checked={chk.checked}
                     onChange={() => handleToggleChecklist(idx)}
-                    className="w-4 h-4 text-[#5f6368] accent-[#5f6368] rounded focus:ring-0 cursor-pointer"
+                    className="w-4 h-4 text-[#5f6368] accent-[#5f6368] rounded focus:ring-0 cursor-pointer shrink-0"
                   />
                   <input
+                    ref={(el) => {
+                      itemRefs.current[idx] = el;
+                    }}
                     type="text"
                     value={chk.text}
                     onChange={(e) => {
@@ -190,14 +389,15 @@ export const NoteEditModal: React.FC<NoteEditModalProps> = ({ note, onClose }) =
                         prev.map((item, i) => (i === idx ? { ...item, text: val } : item))
                       );
                     }}
-                    className={`flex-1 bg-transparent border-none outline-none text-[#202124] dark:text-[#e8eaed] ${
+                    onKeyDown={(e) => handleItemKeyDown(e, idx)}
+                    className={`flex-1 bg-transparent border-none outline-none text-[#202124] dark:text-[#e8eaed] select-text ${
                       chk.checked ? 'line-through text-[#80868b] dark:text-[#9aa0a6]' : ''
                     }`}
                   />
                   <button
                     type="button"
                     onClick={() => handleRemoveChecklist(idx)}
-                    className="text-[#5f6368] hover:text-[#202124] dark:hover:text-white cursor-pointer"
+                    className="text-[#5f6368] hover:text-[#202124] dark:hover:text-white cursor-pointer opacity-70 group-hover:opacity-100 transition-opacity p-1"
                   >
                     <X className="w-4 h-4" />
                   </button>
@@ -208,24 +408,28 @@ export const NoteEditModal: React.FC<NoteEditModalProps> = ({ note, onClose }) =
                 <input
                   type="checkbox"
                   disabled
-                  className="w-4 h-4 text-gray-300 rounded opacity-40"
+                  className="w-4 h-4 text-gray-300 rounded opacity-40 shrink-0"
                 />
                 <input
+                  ref={newItemInputRef}
                   type="text"
                   value={newChecklistText}
                   onChange={(e) => setNewChecklistText(e.target.value)}
+                  onKeyDown={handleNewChecklistKeyDown}
                   placeholder="Ro'yxat elementi qo'shish..."
-                  className="flex-1 text-sm sm:text-base bg-transparent border-none outline-none text-[#202124] dark:text-[#e8eaed] placeholder-[#5f6368] dark:placeholder-[#9aa0a6]"
+                  className="flex-1 text-sm sm:text-base bg-transparent border-none outline-none text-[#202124] dark:text-[#e8eaed] placeholder-[#5f6368] dark:placeholder-[#9aa0a6] select-text"
                 />
               </form>
             </div>
           ) : (
             <textarea
+              ref={textareaRef}
               value={content}
               onChange={(e) => setContent(e.target.value)}
+              onKeyDown={handleTextareaKeyDown}
               placeholder="Qayd yozish..."
               rows={8}
-              className="w-full text-sm sm:text-base bg-transparent border-none outline-none resize-none text-[#202124] dark:text-[#e8eaed] placeholder-[#5f6368] dark:placeholder-[#9aa0a6] leading-relaxed min-h-[160px]"
+              className="w-full text-sm sm:text-base bg-transparent border-none outline-none resize-none text-[#202124] dark:text-[#e8eaed] placeholder-[#5f6368] dark:placeholder-[#9aa0a6] leading-relaxed min-h-[160px] select-text"
             />
           )}
 
@@ -268,10 +472,10 @@ export const NoteEditModal: React.FC<NoteEditModalProps> = ({ note, onClose }) =
             {/* Checklist Toggle */}
             <button
               type="button"
-              onClick={() => setIsChecklistMode(!isChecklistMode)}
+              onClick={handleToggleChecklistMode}
               title={isChecklistMode ? 'Oddiy matn rejimi' : "Ro'yxat rejimi"}
               className={`w-9 h-9 rounded-full hover:bg-black/5 dark:hover:bg-white/10 flex items-center justify-center cursor-pointer ${
-                isChecklistMode ? 'text-[#202124] dark:text-white font-bold' : 'text-[#5f6368] dark:text-[#9aa0a6]'
+                isChecklistMode ? 'text-[#202124] dark:text-white font-bold bg-black/5 dark:bg-white/10' : 'text-[#5f6368] dark:text-[#9aa0a6]'
               }`}
             >
               <CheckSquare className="w-5 h-5" />
